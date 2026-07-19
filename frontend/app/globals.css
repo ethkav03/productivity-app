@@ -17,6 +17,19 @@
   --warning: 217 119 6;
   --danger: 220 38 38;
 
+  /* Categorical palette for the 8 attributes - fixed order (never cycled),
+     validated for CVD-safety and contrast against this app's surfaces.
+     Assignment matches DEFAULT_ATTRIBUTES order: physical, intelligence,
+     discipline, energy, social, wealth, creativity, wisdom. */
+  --attr-physical: 42 120 214;
+  --attr-intelligence: 0 131 0;
+  --attr-discipline: 232 123 164;
+  --attr-energy: 237 161 0;
+  --attr-social: 27 175 122;
+  --attr-wealth: 235 104 52;
+  --attr-creativity: 74 58 167;
+  --attr-wisdom: 227 73 72;
+
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
 
   color-scheme: light;
@@ -36,6 +49,16 @@
   --success: 52 211 153;
   --warning: 250 176 5;
   --danger: 248 113 113;
+
+  /* Same 8 hues, stepped for the dark surface - not a separate palette. */
+  --attr-physical: 57 135 229;
+  --attr-intelligence: 0 131 0;
+  --attr-discipline: 213 81 129;
+  --attr-energy: 201 133 0;
+  --attr-social: 25 158 112;
+  --attr-wealth: 217 89 38;
+  --attr-creativity: 144 133 233;
+  --attr-wisdom: 230 103 103;
 
   color-scheme: dark;
 }

@@ -7,6 +7,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -39,6 +40,7 @@ import {
   getAnalyticsSkills,
   getAnalyticsXp,
 } from '@/lib/api/analytics';
+import { attributeColor } from '@/lib/attribute-colors';
 import { AnalyticsSkillProgress, XPSourceType, XPTransaction } from '@/lib/types';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -79,6 +81,10 @@ function humanizeSourceType(sourceType: XPSourceType): string {
     default:
       return sourceType;
   }
+}
+
+function formatAttributeKey(key: string): string {
+  return key.charAt(0) + key.slice(1).toLowerCase();
 }
 
 function ChartLoading({ height = 240 }: { height?: number }) {
@@ -259,7 +265,10 @@ function AttributeProgressionSection() {
             return (
               <div key={attribute.attributeId} className="rounded-xl border border-border p-3">
                 <div className="flex items-center gap-2">
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                  <div
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
+                    style={{ backgroundColor: attributeColor(attribute.key, 0.15), color: attributeColor(attribute.key) }}
+                  >
                     <Icon className="h-3.5 w-3.5" />
                   </div>
                   <p className="truncate text-xs font-semibold text-foreground">{attribute.name}</p>
@@ -286,11 +295,13 @@ function SkillProgressionSection() {
   const skills: AnalyticsSkillProgress[] = data ? [...data].sort((a, b) => b.level - a.level) : [];
   const chartHeight = Math.max(220, skills.length * 40 + 40);
 
+  const distinctAttributes = Array.from(new Set(skills.map((s) => s.attributeKey)));
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Skill Progression</CardTitle>
-        <span className="text-xs text-muted">By level</span>
+        <span className="text-xs text-muted">By level, colored by attribute</span>
       </CardHeader>
 
       {isLoading && <ChartLoading />}
@@ -304,23 +315,49 @@ function SkillProgressionSection() {
       )}
 
       {!isLoading && data && skills.length > 0 && (
-        <ResponsiveContainer width="100%" height={chartHeight}>
-          <BarChart data={skills} layout="vertical" margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--border))" horizontal={false} />
-            <XAxis type="number" stroke="rgb(var(--muted))" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
-            <YAxis
-              type="category"
-              dataKey="name"
-              stroke="rgb(var(--muted))"
-              fontSize={11}
-              tickLine={false}
-              axisLine={false}
-              width={96}
-            />
-            <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: 'rgb(var(--foreground))', fontWeight: 600 }} formatter={(value: number) => [value, 'Level']} />
-            <Bar dataKey="level" fill="rgb(var(--primary))" radius={[0, 4, 4, 0]} barSize={16} />
-          </BarChart>
-        </ResponsiveContainer>
+        <>
+          <ResponsiveContainer width="100%" height={chartHeight}>
+            <BarChart data={skills} layout="vertical" margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--border))" horizontal={false} />
+              <XAxis type="number" stroke="rgb(var(--muted))" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+              <YAxis
+                type="category"
+                dataKey="name"
+                stroke="rgb(var(--muted))"
+                fontSize={11}
+                tickLine={false}
+                axisLine={false}
+                width={96}
+              />
+              <Tooltip
+                contentStyle={TOOLTIP_STYLE}
+                labelStyle={{ color: 'rgb(var(--foreground))', fontWeight: 600 }}
+                formatter={(value: number, _name, item) => [
+                  `Level ${value} · ${formatAttributeKey(item.payload.attributeKey)}`,
+                  '',
+                ]}
+              />
+              <Bar dataKey="level" radius={[0, 4, 4, 0]} barSize={16}>
+                {skills.map((skill) => (
+                  <Cell key={skill.skillId} fill={attributeColor(skill.attributeKey)} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+
+          <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1.5 border-t border-border pt-3">
+            {distinctAttributes.map((key) => (
+              <span key={key} className="inline-flex items-center gap-1.5 text-xs text-muted">
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: attributeColor(key) }}
+                  aria-hidden
+                />
+                {formatAttributeKey(key)}
+              </span>
+            ))}
+          </div>
+        </>
       )}
     </Card>
   );

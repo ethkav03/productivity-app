@@ -13,6 +13,7 @@ import { createGoal, getGoals, CreateGoalInput } from '@/lib/api/goals';
 import { getSkills } from '@/lib/api/skills';
 import { Goal, GoalStatus, GoalType } from '@/lib/types';
 import { getApiErrorMessage } from '@/lib/api-client';
+import { AttributeDots } from '@/components/ui/attribute-dots';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -212,12 +213,8 @@ export default function GoalsPage() {
                 </div>
 
                 {goal.skills.length > 0 && (
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {goal.skills.map((skill) => (
-                      <Badge key={skill.id} variant="accent">
-                        {skill.name}
-                      </Badge>
-                    ))}
+                  <div className="mt-3">
+                    <AttributeDots skills={goal.skills} />
                   </div>
                 )}
 

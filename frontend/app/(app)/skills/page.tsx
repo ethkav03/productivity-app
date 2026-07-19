@@ -20,6 +20,7 @@ import {
 import { createSkill, deleteSkill, getSkillSuggestions } from '@/lib/api/skills';
 import { getAttributes } from '@/lib/api/attributes';
 import { getApiErrorMessage } from '@/lib/api-client';
+import { attributeColor } from '@/lib/attribute-colors';
 import { Attribute, AttributeKey, DefaultSkillDefinition, Skill } from '@/lib/types';
 import { Card } from '@/components/ui/card';
 import { ProgressBar } from '@/components/ui/progress-bar';
@@ -313,7 +314,10 @@ function AttributeSection({
     <section>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary">
+          <div
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+            style={{ backgroundColor: attributeColor(attribute.key, 0.15), color: attributeColor(attribute.key) }}
+          >
             <Icon className="h-5 w-5" />
           </div>
           <div>

@@ -91,7 +91,11 @@ export class AnalyticsService {
   }
 
   async skillProgress(userId: string) {
-    const skills = await this.prisma.skill.findMany({ where: { userId }, orderBy: { name: 'asc' } });
+    const skills = await this.prisma.skill.findMany({
+      where: { userId },
+      include: { attribute: { select: { key: true } } },
+      orderBy: { name: 'asc' },
+    });
 
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const weeklyAgg = await this.prisma.xPTransaction.groupBy({
@@ -104,6 +108,7 @@ export class AnalyticsService {
     return skills.map((s) => ({
       skillId: s.id,
       name: s.name,
+      attributeKey: s.attribute.key,
       level: s.level,
       totalXP: s.totalXP,
       weeklyXP: weeklyMap.get(s.id) ?? 0,

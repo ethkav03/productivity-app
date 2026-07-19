@@ -12,6 +12,7 @@ import { completeQuest, getQuests } from '@/lib/api/quests';
 import { getGoals } from '@/lib/api/goals';
 import { getUnlockedAchievements } from '@/lib/api/achievements';
 import { getAnalyticsFeed } from '@/lib/api/analytics';
+import { AttributeDots } from '@/components/ui/attribute-dots';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { ProgressBar } from '@/components/ui/progress-bar';
 import { Badge } from '@/components/ui/badge';
@@ -290,11 +291,7 @@ function HabitRow({
             {habit.title}
           </span>
           <Badge variant="accent">+{habit.xpReward} XP</Badge>
-          {habit.skills.map((skill) => (
-            <Badge key={skill.id} variant="outline">
-              {skill.name}
-            </Badge>
-          ))}
+          <AttributeDots skills={habit.skills} />
         </div>
       </div>
       <button
@@ -343,11 +340,7 @@ function QuestRow({
           </span>
           <Badge variant="success">+{quest.xpReward} XP</Badge>
           <Badge variant="outline">{quest.difficulty}</Badge>
-          {quest.skills.map((skill) => (
-            <Badge key={skill.id} variant="outline">
-              {skill.name}
-            </Badge>
-          ))}
+          <AttributeDots skills={quest.skills} />
         </div>
       </div>
       {completedToday ? (

@@ -14,6 +14,7 @@ import { completeQuest, createQuest, getQuests } from '@/lib/api/quests';
 import { getGoals } from '@/lib/api/goals';
 import { getSkills } from '@/lib/api/skills';
 import { Quest, QuestDifficulty, QuestType } from '@/lib/types';
+import { AttributeDots } from '@/components/ui/attribute-dots';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
@@ -199,11 +200,7 @@ function QuestCard({ quest, status, onComplete, isCompleting }: QuestCardProps) 
 
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
         <Badge variant="success">+{quest.xpReward} XP</Badge>
-        {quest.skills.map((skill) => (
-          <Badge key={skill.id} variant="default">
-            {skill.name}
-          </Badge>
-        ))}
+        <AttributeDots skills={quest.skills} />
         {quest.goal && (
           <Badge variant="outline">
             <Target className="h-3 w-3" />

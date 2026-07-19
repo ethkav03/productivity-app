@@ -262,6 +262,7 @@ export interface AnalyticsXpPoint {
 export interface AnalyticsSkillProgress {
   skillId: string;
   name: string;
+  attributeKey: AttributeKey;
   level: number;
   totalXP: number;
   weeklyXP: number;
