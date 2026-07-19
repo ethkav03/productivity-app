@@ -3,7 +3,7 @@
 A gamified personal-development platform where real-world actions become character progression.
 
 > **Your real life is the game.** Create goals, break them into quests and habits, complete
-> them to earn XP, level up your character and individual skills, unlock achievements, and
+> them to earn XP, level up your character, skills, and attributes, unlock achievements, and
 > track it all with real analytics.
 
 This is a full-stack implementation of the Life RPG MVP: a Next.js frontend, a NestJS/Prisma
@@ -13,12 +13,17 @@ analytics, notifications).
 ## Core gameplay loop
 
 ```
-Goals → Quests / Habits → Complete them → XP → Skills level up → Character levels up
+Goals → Quests / Habits → Complete them → XP → Skills level up → Attributes level up → Character levels up
                                               ↓
                                        Achievements unlock
                                               ↓
                                           Analytics
 ```
+
+Every skill belongs to one of 8 fixed attributes - Physical, Intelligence, Discipline, Energy,
+Social, Wealth, Creativity, Wisdom - which every user gets automatically at registration.
+Completing an activity awards XP to the character, the skill(s) it's tagged with, *and* each of
+those skills' attributes, so "Strength" progress also shows up as "Physical" progress.
 
 ## Tech stack
 
@@ -37,16 +42,23 @@ Goals → Quests / Habits → Complete them → XP → Skills level up → Chara
 
 ```
 backend/
-  prisma/schema.prisma      Full data model (User, Skill, Goal, Quest, Habit,
-                             XPTransaction, Achievement, Notification, ...)
-  prisma/seed.ts             Seeds the 11 default achievement definitions
+  prisma/schema.prisma      Full data model (User, Attribute, Skill, Goal,
+                             Quest, Habit, XPTransaction, Achievement, ...)
+  prisma/seed.ts             Seeds the 13 default achievement definitions
   src/
-    auth/                    Register / login / refresh (JWT)
+    auth/                    Register / login / refresh (JWT) - also seeds the
+                              8 fixed attributes for every new user
     users/                   Profile (GET/PATCH /users/me)
-    skills/                  Skill CRUD + suggestions + XP/level detail
+    attributes/               The 8 fixed top-level stats (Physical,
+                              Intelligence, Discipline, Energy, Social,
+                              Wealth, Creativity, Wisdom); every skill
+                              belongs to one
+    skills/                  Skill CRUD + suggestions (grouped by attribute)
+                              + XP/level detail
     xp/                      Centralised XP ledger (XpService.awardXp) - every
                               XP grant in the app goes through here as an
-                              immutable transaction, never a direct increment
+                              immutable transaction, never a direct increment,
+                              and cascades from skill → attribute → character
     progression/             Orchestrates "complete an activity": XP award →
                               level check → character streak → achievement
                               check → notifications. Quests/Habits/Goals call
@@ -152,8 +164,9 @@ This starts Postgres, runs migrations + seeds achievements, and starts both the 
 
 - **Centralised XP ledger.** Every XP grant (quest/habit/goal completion) creates an
   immutable `XPTransaction` row rather than incrementing a counter directly. One
-  character-level row plus one row per associated skill, so history is fully auditable and
-  can't be double-counted.
+  character-level row, one per associated skill, and one per that skill's attribute, so
+  history is fully auditable and can't be double-counted (every query that isolates
+  "character-level" rows filters on both `skillId: null` and `attributeId: null`).
 - **A single completion workflow.** `ProgressionService.completeActivity` is the one place
   that awards XP, recalculates levels, updates the character's daily streak, checks
   achievements, and raises notifications - every resource module calls into it instead of
@@ -174,13 +187,14 @@ backend is running. Everything is prefixed with `/api` and (aside from `/auth/*`
 ```
 /auth        register, login, refresh, logout
 /users       me (get/patch)
-/skills      CRUD + suggestions
+/attributes  list (with nested skills) + detail
+/skills      CRUD + suggestions (grouped by attribute)
 /quests      CRUD + complete
 /habits      CRUD + complete
 /goals       CRUD + progress
 /achievements  list + unlocked
 /notifications  list + mark read
-/analytics   overview, xp, skills, activity, feed
+/analytics   overview, xp, skills, attributes, activity, feed
 ```
 
 ## Scripts (repo root)
