@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { Swords } from 'lucide-react';
@@ -14,7 +14,8 @@ import { StepDots } from './_components/step-dots';
 import { WelcomeStep } from './_components/welcome-step';
 import { SkillsStep } from './_components/skills-step';
 import { GoalStep, GoalFormState, INITIAL_GOAL_FORM } from './_components/goal-step';
-import { ActivitiesStep, QuickHabit, QuickQuest } from './_components/activities-step';
+import { ActivitiesStep, makeId, QuickHabit, QuickQuest } from './_components/activities-step';
+import { buildStarterQuests } from './_components/starter-quests';
 
 const TOTAL_STEPS = 4;
 
@@ -36,6 +37,23 @@ export default function OnboardingPage() {
     isError: suggestionsIsError,
     error: suggestionsError,
   } = useQuery({ queryKey: ['skill-suggestions'], queryFn: getSkillSuggestions });
+
+  // Auto-populate a few starter quests the first time the user reaches this
+  // step, one per selected skill, so they don't start from a blank list.
+  // Guarded on an empty list so it never clobbers edits made after going
+  // back and forth between steps.
+  useEffect(() => {
+    if (step !== 4 || quests.length > 0 || selectedSkills.length === 0) return;
+    const starterQuests = buildStarterQuests(selectedSkills).map((template) => ({
+      id: makeId(),
+      title: template.title,
+      description: template.description,
+      difficulty: template.difficulty,
+      suggested: true,
+    }));
+    setQuests(starterQuests);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
   function goNext() {
     setStep((s) => Math.min(s + 1, TOTAL_STEPS));
@@ -70,6 +88,7 @@ export default function OnboardingPage() {
         ...quests.map((quest) =>
           createQuest({
             title: quest.title,
+            description: quest.description,
             type: 'ONE_TIME',
             difficulty: quest.difficulty,
             goalId: createdGoal.id,

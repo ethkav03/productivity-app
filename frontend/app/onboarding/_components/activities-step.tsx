@@ -10,6 +10,8 @@ export interface QuickQuest {
   id: string;
   title: string;
   difficulty: QuestDifficulty;
+  description?: string;
+  suggested?: boolean;
 }
 
 export interface QuickHabit {
@@ -18,7 +20,7 @@ export interface QuickHabit {
   frequency: HabitFrequency;
 }
 
-function makeId(): string {
+export function makeId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
@@ -64,6 +66,7 @@ export function ActivitiesStep({
   const [attempted, setAttempted] = useState(false);
 
   const canSubmit = quests.length > 0 || habits.length > 0;
+  const hasSuggestedQuests = quests.some((quest) => quest.suggested);
 
   function addQuest() {
     if (!questTitle.trim()) return;
@@ -92,7 +95,9 @@ export function ActivitiesStep({
       <div>
         <h2 className="text-lg font-semibold text-foreground">Add starter quests &amp; habits</h2>
         <p className="mt-1 text-sm text-muted">
-          These will be linked to your goal and tagged with the skills you picked.
+          {hasSuggestedQuests
+            ? "We've added a few starter quests based on the skills you picked - edit, remove, or add your own below."
+            : 'These will be linked to your goal and tagged with the skills you picked.'}
         </p>
       </div>
 
@@ -125,15 +130,23 @@ export function ActivitiesStep({
             {quests.map((quest) => (
               <li
                 key={quest.id}
-                className="flex items-center justify-between rounded-lg bg-surface-hover px-3 py-2 text-sm"
+                className="flex items-start justify-between gap-3 rounded-lg bg-surface-hover px-3 py-2 text-sm"
               >
-                <span className="text-foreground">
-                  {quest.title} <span className="text-muted">· {quest.difficulty}</span>
-                </span>
+                <div className="min-w-0">
+                  <span className="text-foreground">
+                    {quest.title} <span className="text-muted">· {quest.difficulty}</span>
+                    {quest.suggested && (
+                      <span className="ml-1.5 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                        Suggested
+                      </span>
+                    )}
+                  </span>
+                  {quest.description && <p className="mt-0.5 text-xs text-muted">{quest.description}</p>}
+                </div>
                 <button
                   type="button"
                   onClick={() => onRemoveQuest(quest.id)}
-                  className="text-muted hover:text-danger"
+                  className="shrink-0 text-muted hover:text-danger"
                   aria-label={`Remove ${quest.title}`}
                 >
                   <X className="h-4 w-4" />
