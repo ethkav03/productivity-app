@@ -6,6 +6,7 @@ import configuration from './config/configuration';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
+import { AttributesModule } from './attributes/attributes.module';
 import { SkillsModule } from './skills/skills.module';
 import { XpModule } from './xp/xp.module';
 import { ProgressionModule } from './progression/progression.module';
@@ -23,6 +24,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
     PrismaModule,
     AuthModule,
     UsersModule,
+    AttributesModule,
     SkillsModule,
     XpModule,
     ProgressionModule,

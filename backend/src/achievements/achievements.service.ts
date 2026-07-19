@@ -84,17 +84,32 @@ export class AchievementsService {
         return (await this.countCompletions(userId, 'GOAL_COMPLETION')) >= achievement.requirementValue;
       case 'GOALS_CREATED':
         return (await this.prisma.goal.count({ where: { userId } })) >= achievement.requirementValue;
+      case 'ATTRIBUTE_LEVEL_REACHED': {
+        if (!achievement.attributeKey) return false;
+        const attribute = await this.prisma.attribute.findFirst({
+          where: { userId, key: achievement.attributeKey },
+        });
+        return (attribute?.level ?? 0) >= achievement.requirementValue;
+      }
       case 'SKILL_LEVEL_REACHED': {
         if (!achievement.skillName) return false;
         const skill = await this.prisma.skill.findFirst({
-          where: { userId, name: achievement.skillName },
+          where: {
+            userId,
+            name: achievement.skillName,
+            ...(achievement.attributeKey && { attribute: { key: achievement.attributeKey } }),
+          },
         });
         return (skill?.level ?? 0) >= achievement.requirementValue;
       }
       case 'SKILL_ACTIVITY_COUNT': {
         if (!achievement.skillName) return false;
         const skill = await this.prisma.skill.findFirst({
-          where: { userId, name: achievement.skillName },
+          where: {
+            userId,
+            name: achievement.skillName,
+            ...(achievement.attributeKey && { attribute: { key: achievement.attributeKey } }),
+          },
         });
         if (!skill) return false;
         const count = await this.prisma.xPTransaction.count({ where: { userId, skillId: skill.id } });
@@ -106,8 +121,11 @@ export class AchievementsService {
   }
 
   private countCompletions(userId: string, sourceType: XPSourceType) {
-    // skillId: null isolates the one character-level ledger row per
-    // completion event, so multi-skill quests/habits aren't over-counted.
-    return this.prisma.xPTransaction.count({ where: { userId, sourceType, skillId: null } });
+    // skillId + attributeId both null isolates the one character-level
+    // ledger row per completion event, so multi-skill/multi-attribute
+    // quests and habits aren't over-counted.
+    return this.prisma.xPTransaction.count({
+      where: { userId, sourceType, skillId: null, attributeId: null },
+    });
   }
 }

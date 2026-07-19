@@ -6,22 +6,19 @@ import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format, formatDistanceToNow } from 'date-fns';
 import {
-  Apple,
   ArrowLeft,
-  BookOpen,
   Brain,
-  CheckSquare,
-  Code,
+  Compass,
   Dumbbell,
-  Languages,
   LucideIcon,
-  Moon,
   Palette,
   Pencil,
   Shield,
   Sparkles,
   Trash2,
+  Users,
   Wallet,
+  Zap,
 } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { deleteSkill, getSkill, updateSkill } from '@/lib/api/skills';
@@ -38,17 +35,13 @@ import { useToast } from '@/components/ui/toaster';
 
 const SKILL_ICON_MAP: Record<string, LucideIcon> = {
   dumbbell: Dumbbell,
-  apple: Apple,
-  moon: Moon,
   brain: Brain,
   shield: Shield,
-  'check-square': CheckSquare,
-  sparkles: Sparkles,
-  code: Code,
-  languages: Languages,
-  'book-open': BookOpen,
+  zap: Zap,
+  users: Users,
   wallet: Wallet,
   palette: Palette,
+  compass: Compass,
 };
 
 function resolveSkillIcon(icon: string | null | undefined): LucideIcon {
@@ -153,7 +146,7 @@ export default function SkillDetailPage({ params }: { params: { id: string } }) 
   }
 
   const skill = skillQuery.data;
-  const Icon = resolveSkillIcon(skill.icon);
+  const Icon = resolveSkillIcon(skill.icon ?? skill.attribute.icon);
   const progress = skill.xpForNextLevel ? Math.min(100, Math.max(0, (skill.currentXP / skill.xpForNextLevel) * 100)) : 0;
 
   return (
@@ -200,6 +193,12 @@ export default function SkillDetailPage({ params }: { params: { id: string } }) 
                   <h1 className="text-xl font-semibold text-foreground">{skill.name}</h1>
                   <Badge variant="primary">Lvl {skill.level}</Badge>
                 </div>
+                <Link
+                  href="/skills"
+                  className="mt-1 inline-block text-xs text-muted hover:text-primary hover:underline"
+                >
+                  Part of {skill.attribute.name}
+                </Link>
                 {skill.description && <p className="mt-1 text-sm text-muted">{skill.description}</p>}
               </div>
             )}

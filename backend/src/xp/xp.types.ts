@@ -20,8 +20,18 @@ export interface SkillXpResult extends LevelChangeResult {
   skillId: string;
 }
 
+export interface AttributeXpResult extends LevelChangeResult {
+  attributeId: string;
+}
+
 export interface XpAwardResult {
   xpGained: number;
   character: LevelChangeResult;
   skills: SkillXpResult[];
+  /**
+   * One entry per skill in `skills` (not deduplicated by attribute) - if two
+   * associated skills share an attribute, that attribute is awarded XP
+   * twice, mirroring how each skill itself gets the full XP amount.
+   */
+  attributes: AttributeXpResult[];
 }

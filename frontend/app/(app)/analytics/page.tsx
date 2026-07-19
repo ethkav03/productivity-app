@@ -13,10 +13,27 @@ import {
   YAxis,
 } from 'recharts';
 import { format, formatDistanceToNow } from 'date-fns';
-import { CheckCircle2, Flame, Inbox, LineChart, LucideIcon, Sparkles, Trophy, Zap } from 'lucide-react';
+import {
+  Brain,
+  CheckCircle2,
+  Compass,
+  Dumbbell,
+  Flame,
+  Inbox,
+  LineChart,
+  LucideIcon,
+  Palette,
+  Shield,
+  Sparkles,
+  Trophy,
+  Users,
+  Wallet,
+  Zap,
+} from 'lucide-react';
 import clsx from 'clsx';
 import {
   getAnalyticsActivity,
+  getAnalyticsAttributes,
   getAnalyticsFeed,
   getAnalyticsOverview,
   getAnalyticsSkills,
@@ -27,6 +44,17 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Spinner } from '@/components/ui/spinner';
 import { EmptyState } from '@/components/ui/empty-state';
+
+const ATTRIBUTE_ICON_MAP: Record<string, LucideIcon> = {
+  dumbbell: Dumbbell,
+  brain: Brain,
+  shield: Shield,
+  zap: Zap,
+  users: Users,
+  wallet: Wallet,
+  palette: Palette,
+  compass: Compass,
+};
 
 const TOOLTIP_STYLE = {
   backgroundColor: 'rgb(var(--surface))',
@@ -70,6 +98,8 @@ export default function AnalyticsPage() {
       </header>
 
       <OverviewSection />
+
+      <AttributeProgressionSection />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <XpOverTimeSection />
@@ -198,6 +228,50 @@ function XpOverTimeSection() {
             />
           </AreaChart>
         </ResponsiveContainer>
+      )}
+    </Card>
+  );
+}
+
+function AttributeProgressionSection() {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['analytics', 'attributes'],
+    queryFn: getAnalyticsAttributes,
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Attribute Progression</CardTitle>
+        <span className="text-xs text-muted">Your character sheet</span>
+      </CardHeader>
+
+      {isLoading && <ChartLoading height={140} />}
+
+      {!isLoading && (isError || !data) && (
+        <p className="py-8 text-center text-sm text-muted">Couldn&apos;t load attribute progression.</p>
+      )}
+
+      {!isLoading && data && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {data.map((attribute) => {
+            const Icon = ATTRIBUTE_ICON_MAP[attribute.icon ?? ''] ?? Sparkles;
+            return (
+              <div key={attribute.attributeId} className="rounded-xl border border-border p-3">
+                <div className="flex items-center gap-2">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                    <Icon className="h-3.5 w-3.5" />
+                  </div>
+                  <p className="truncate text-xs font-semibold text-foreground">{attribute.name}</p>
+                </div>
+                <div className="mt-2 flex items-baseline justify-between">
+                  <Badge variant="primary">Lvl {attribute.level}</Badge>
+                  <span className="text-xs text-muted">+{attribute.weeklyXP} this wk</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
     </Card>
   );

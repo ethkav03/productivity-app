@@ -8,7 +8,9 @@ import { CreateGoalDto } from './dto/create-goal.dto';
 import { UpdateGoalDto } from './dto/update-goal.dto';
 import { ProgressGoalDto } from './dto/progress-goal.dto';
 
-const goalInclude = { goalSkills: { include: { skill: true } } } satisfies Prisma.GoalInclude;
+const goalInclude = {
+  goalSkills: { include: { skill: { include: { attribute: true } } } },
+} satisfies Prisma.GoalInclude;
 
 type GoalWithSkills = Prisma.GoalGetPayload<{ include: typeof goalInclude }>;
 

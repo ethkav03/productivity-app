@@ -38,12 +38,12 @@ export class AnalyticsService {
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
     const xpThisWeekAgg = await this.prisma.xPTransaction.aggregate({
-      where: { userId, skillId: null, createdAt: { gte: weekAgo } },
+      where: { userId, skillId: null, attributeId: null, createdAt: { gte: weekAgo } },
       _sum: { amount: true },
     });
 
     const activitiesCompleted = await this.prisma.xPTransaction.count({
-      where: { userId, skillId: null, sourceType: { in: [...COMPLETION_SOURCE_TYPES] } },
+      where: { userId, skillId: null, attributeId: null, sourceType: { in: [...COMPLETION_SOURCE_TYPES] } },
     });
 
     const topSkillGroup = await this.prisma.xPTransaction.groupBy({
@@ -77,7 +77,7 @@ export class AnalyticsService {
     const rangeStart = rangeStartForDays(days);
 
     const rows = await this.prisma.xPTransaction.findMany({
-      where: { userId, skillId: null, createdAt: { gte: rangeStart } },
+      where: { userId, skillId: null, attributeId: null, createdAt: { gte: rangeStart } },
       select: { amount: true, createdAt: true },
     });
 
@@ -110,6 +110,28 @@ export class AnalyticsService {
     }));
   }
 
+  async attributeProgress(userId: string) {
+    const attributes = await this.prisma.attribute.findMany({ where: { userId } });
+
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const weeklyAgg = await this.prisma.xPTransaction.groupBy({
+      by: ['attributeId'],
+      where: { userId, attributeId: { in: attributes.map((a) => a.id) }, createdAt: { gte: weekAgo } },
+      _sum: { amount: true },
+    });
+    const weeklyMap = new Map(weeklyAgg.map((row) => [row.attributeId, row._sum.amount ?? 0]));
+
+    return attributes.map((a) => ({
+      attributeId: a.id,
+      key: a.key,
+      name: a.name,
+      icon: a.icon,
+      level: a.level,
+      totalXP: a.totalXP,
+      weeklyXP: weeklyMap.get(a.id) ?? 0,
+    }));
+  }
+
   async activityHeatmap(userId: string, days: number) {
     const rangeStart = rangeStartForDays(days);
 
@@ -117,6 +139,7 @@ export class AnalyticsService {
       where: {
         userId,
         skillId: null,
+        attributeId: null,
         sourceType: { in: [...COMPLETION_SOURCE_TYPES] },
         createdAt: { gte: rangeStart },
       },
@@ -134,7 +157,7 @@ export class AnalyticsService {
 
   async feed(userId: string, limit: number) {
     const rows = await this.prisma.xPTransaction.findMany({
-      where: { userId, skillId: null },
+      where: { userId, skillId: null, attributeId: null },
       orderBy: { createdAt: 'desc' },
       take: limit,
     });

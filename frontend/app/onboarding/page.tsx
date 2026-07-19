@@ -5,11 +5,12 @@ import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { Swords } from 'lucide-react';
 import { createSkill, getSkillSuggestions } from '@/lib/api/skills';
+import { getAttributes } from '@/lib/api/attributes';
 import { createGoal } from '@/lib/api/goals';
 import { createQuest } from '@/lib/api/quests';
 import { createHabit } from '@/lib/api/habits';
 import { getApiErrorMessage } from '@/lib/api-client';
-import { Skill } from '@/lib/types';
+import { AttributeKey, Skill } from '@/lib/types';
 import { StepDots } from './_components/step-dots';
 import { WelcomeStep } from './_components/welcome-step';
 import { SkillsStep } from './_components/skills-step';
@@ -18,6 +19,12 @@ import { ActivitiesStep, makeId, QuickHabit, QuickQuest } from './_components/ac
 import { buildStarterQuests } from './_components/starter-quests';
 
 const TOTAL_STEPS = 4;
+
+/** Splits a `${attributeKey}:${skillName}` composite selection key back apart. */
+function parseSkillSelection(key: string): { attributeKey: AttributeKey; name: string } {
+  const [attributeKey, ...rest] = key.split(':');
+  return { attributeKey: attributeKey as AttributeKey, name: rest.join(':') };
+}
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -38,13 +45,18 @@ export default function OnboardingPage() {
     error: suggestionsError,
   } = useQuery({ queryKey: ['skill-suggestions'], queryFn: getSkillSuggestions });
 
+  // Every user already has all 8 attributes from registration - fetched here
+  // purely to resolve the real attributeId when creating chosen skills.
+  const { data: attributes } = useQuery({ queryKey: ['attributes'], queryFn: getAttributes });
+
   // Auto-populate a few starter quests the first time the user reaches this
-  // step, one per selected skill, so they don't start from a blank list.
-  // Guarded on an empty list so it never clobbers edits made after going
-  // back and forth between steps.
+  // step, one per distinct attribute represented by their selected skills,
+  // so they don't start from a blank list. Guarded on an empty list so it
+  // never clobbers edits made after going back and forth between steps.
   useEffect(() => {
     if (step !== 4 || quests.length > 0 || selectedSkills.length === 0) return;
-    const starterQuests = buildStarterQuests(selectedSkills).map((template) => ({
+    const attributeKeys = selectedSkills.map((key) => parseSkillSelection(key).attributeKey);
+    const starterQuests = buildStarterQuests(attributeKeys).map((template) => ({
       id: makeId(),
       title: template.title,
       description: template.description,
@@ -68,9 +80,19 @@ export default function OnboardingPage() {
     setSubmitError(null);
     setSubmitting(true);
     try {
-      const skillDefs = (suggestions ?? []).filter((def) => selectedSkills.includes(def.name));
+      const attributeIdByKey = new Map((attributes ?? []).map((a) => [a.key, a.id]));
+      const suggestionByKey = new Map(
+        (suggestions ?? []).flatMap((group) => group.skills.map((skill) => [`${group.key}:${skill.name}`, skill])),
+      );
+
       const createdSkills: Skill[] = await Promise.all(
-        skillDefs.map((def) => createSkill({ name: def.name, description: def.description, icon: def.icon })),
+        selectedSkills.map((selectionKey) => {
+          const { attributeKey, name } = parseSkillSelection(selectionKey);
+          const attributeId = attributeIdByKey.get(attributeKey);
+          const definition = suggestionByKey.get(selectionKey);
+          if (!attributeId) throw new Error(`Missing attribute for ${attributeKey}`);
+          return createSkill({ name, attributeId, description: definition?.description });
+        }),
       );
       const skillIds = createdSkills.map((s) => s.id);
 

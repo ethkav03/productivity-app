@@ -58,6 +58,11 @@ export class ProgressionService {
         leveledUp: skill.leveledUp,
         newLevel: skill.newLevel,
       })),
+      attributeResults: xpResult.attributes.map((attribute) => ({
+        attributeId: attribute.attributeId,
+        leveledUp: attribute.leveledUp,
+        newLevel: attribute.newLevel,
+      })),
       achievementsUnlocked: unlockedAchievements.map((achievement) => achievement.name),
       streak,
     };

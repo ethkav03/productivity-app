@@ -72,6 +72,18 @@ enum AchievementRequirementType {
   SKILL_LEVEL_REACHED
   SKILL_ACTIVITY_COUNT
   GOALS_CREATED
+  ATTRIBUTE_LEVEL_REACHED
+}
+
+enum AttributeKey {
+  PHYSICAL
+  INTELLIGENCE
+  DISCIPLINE
+  ENERGY
+  SOCIAL
+  WEALTH
+  CREATIVITY
+  WISDOM
 }
 
 enum NotificationType {
@@ -105,6 +117,7 @@ model User {
   updatedAt DateTime @updatedAt
 
   skills            Skill[]
+  attributes        Attribute[]
   goals             Goal[]
   quests            Quest[]
   habits            Habit[]
@@ -116,9 +129,37 @@ model User {
   @@map("users")
 }
 
+/// The 8 top-level character attributes (Physical, Intelligence, ...). Every
+/// user gets all 8 auto-created at registration - unlike skills, attributes
+/// are not opt-in. Attribute XP/level is derived by mirroring the XP a user
+/// earns in any skill that belongs to it (see XpService.awardXp).
+model Attribute {
+  id          String       @id @default(uuid())
+  userId      String
+  key         AttributeKey
+  name        String
+  description String?
+  icon        String?
+
+  level   Int @default(1)
+  totalXP Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skills         Skill[]
+  xpTransactions XPTransaction[]
+
+  @@unique([userId, key])
+  @@index([userId])
+  @@map("attributes")
+}
+
 model Skill {
   id          String  @id @default(uuid())
   userId      String
+  attributeId String
   name        String
   description String?
   icon        String?
@@ -131,13 +172,18 @@ model Skill {
   updatedAt DateTime @updatedAt
 
   user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attribute      Attribute       @relation(fields: [attributeId], references: [id], onDelete: Cascade)
   questSkills    QuestSkill[]
   habitSkills    HabitSkill[]
   goalSkills     GoalSkill[]
   xpTransactions XPTransaction[]
 
-  @@unique([userId, name])
+  // Same skill name can exist under different attributes (e.g. "Focus" under
+  // both Intelligence and Discipline) as distinct stats, so uniqueness is
+  // scoped per-attribute rather than globally per-user.
+  @@unique([userId, attributeId, name])
   @@index([userId])
+  @@index([attributeId])
   @@map("skills")
 }
 
@@ -278,20 +324,23 @@ model HabitCompletion {
 }
 
 model XPTransaction {
-  id         String       @id @default(uuid())
-  userId     String
-  skillId    String?
-  amount     Int
-  sourceType XPSourceType
-  sourceId   String?
-  note       String?
-  createdAt  DateTime     @default(now())
+  id          String       @id @default(uuid())
+  userId      String
+  skillId     String?
+  attributeId String?
+  amount      Int
+  sourceType  XPSourceType
+  sourceId    String?
+  note        String?
+  createdAt   DateTime     @default(now())
 
-  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  skill Skill? @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skill     Skill?     @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  attribute Attribute? @relation(fields: [attributeId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([skillId])
+  @@index([attributeId])
   @@index([userId, createdAt])
   @@map("xp_transactions")
 }
@@ -305,6 +354,7 @@ model Achievement {
   requirementType   AchievementRequirementType
   requirementValue  Int
   skillName         String?
+  attributeKey      AttributeKey?
 
   createdAt DateTime @default(now())
 

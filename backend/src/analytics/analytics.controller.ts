@@ -27,6 +27,11 @@ export class AnalyticsController {
     return this.analyticsService.skillProgress(user.userId);
   }
 
+  @Get('attributes')
+  attributes(@CurrentUser() user: AuthenticatedUser) {
+    return this.analyticsService.attributeProgress(user.userId);
+  }
+
   @Get('activity')
   activity(@CurrentUser() user: AuthenticatedUser, @Query('days') daysParam?: string) {
     const days = Math.min(365, Math.max(1, parseInt(daysParam ?? '84', 10) || 84));

@@ -8,6 +8,7 @@ import { AppConfig } from '../config/configuration';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { toPublicUser } from '../common/serializers/public-user';
+import { AttributesService } from '../attributes/attributes.service';
 
 const SALT_ROUNDS = 10;
 
@@ -22,6 +23,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService<AppConfig, true>,
+    private readonly attributesService: AttributesService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -35,8 +37,12 @@ export class AuthService {
     }
 
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
-    const user = await this.prisma.user.create({
-      data: { email: dto.email, username: dto.username, passwordHash },
+    const user = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: { email: dto.email, username: dto.username, passwordHash },
+      });
+      await this.attributesService.ensureDefaultAttributes(created.id, tx);
+      return created;
     });
 
     return this.issueSession(user);

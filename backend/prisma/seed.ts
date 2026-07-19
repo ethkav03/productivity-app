@@ -1,4 +1,4 @@
-import { PrismaClient, AchievementRequirementType } from '@prisma/client';
+import { PrismaClient, AchievementRequirementType, AttributeKey } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -9,6 +9,7 @@ interface AchievementSeed {
   requirementType: AchievementRequirementType;
   requirementValue: number;
   skillName?: string;
+  attributeKey?: AttributeKey;
   icon?: string;
 }
 
@@ -20,7 +21,9 @@ const ACHIEVEMENTS: AchievementSeed[] = [
   { key: 'veteran', name: 'Veteran', description: 'Reach Level 25.', requirementType: 'LEVEL_REACHED', requirementValue: 25, icon: 'award' },
   { key: 'consistent', name: 'Consistent', description: 'Maintain a 7-day streak.', requirementType: 'STREAK_LENGTH', requirementValue: 7, icon: 'flame' },
   { key: 'dedicated', name: 'Dedicated', description: 'Maintain a 30-day streak.', requirementType: 'STREAK_LENGTH', requirementValue: 30, icon: 'flame' },
-  { key: 'first-workout', name: 'First Workout', description: 'Complete your first Fitness activity.', requirementType: 'SKILL_ACTIVITY_COUNT', requirementValue: 1, skillName: 'Fitness', icon: 'dumbbell' },
+  { key: 'getting-physical', name: 'Getting Physical', description: 'Reach Physical Level 2.', requirementType: 'ATTRIBUTE_LEVEL_REACHED', requirementValue: 2, attributeKey: 'PHYSICAL', icon: 'dumbbell' },
+  { key: 'sharp-mind', name: 'Sharp Mind', description: 'Reach Intelligence Level 5.', requirementType: 'ATTRIBUTE_LEVEL_REACHED', requirementValue: 5, attributeKey: 'INTELLIGENCE', icon: 'brain' },
+  { key: 'iron-will', name: 'Iron Will', description: 'Reach Discipline Level 5.', requirementType: 'ATTRIBUTE_LEVEL_REACHED', requirementValue: 5, attributeKey: 'DISCIPLINE', icon: 'shield' },
   { key: 'goal-setter', name: 'Goal Setter', description: 'Create your first goal.', requirementType: 'GOALS_CREATED', requirementValue: 1, icon: 'flag' },
   { key: 'finisher', name: 'Finisher', description: 'Complete your first goal.', requirementType: 'GOALS_COMPLETED', requirementValue: 1, icon: 'trophy' },
   { key: 'overachiever', name: 'Overachiever', description: 'Complete 10 goals.', requirementType: 'GOALS_COMPLETED', requirementValue: 10, icon: 'trophy' },

@@ -14,7 +14,7 @@ import { CreateHabitDto } from './dto/create-habit.dto';
 import { UpdateHabitDto } from './dto/update-habit.dto';
 
 const habitInclude = {
-  habitSkills: { include: { skill: true } },
+  habitSkills: { include: { skill: { include: { attribute: true } } } },
 } satisfies Prisma.HabitInclude;
 
 type HabitWithSkills = Prisma.HabitGetPayload<{ include: typeof habitInclude }>;

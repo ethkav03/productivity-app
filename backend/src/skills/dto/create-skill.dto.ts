@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 
 export class CreateSkillDto {
   @ApiProperty()
@@ -7,6 +7,10 @@ export class CreateSkillDto {
   @MinLength(2)
   @MaxLength(40)
   name!: string;
+
+  @ApiProperty({ description: 'The attribute this skill belongs to (see GET /attributes).' })
+  @IsUUID()
+  attributeId!: string;
 
   @ApiPropertyOptional()
   @IsOptional()

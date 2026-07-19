@@ -1,5 +1,12 @@
 import { apiClient } from '../api-client';
-import { AnalyticsActivityDay, AnalyticsOverview, AnalyticsSkillProgress, AnalyticsXpPoint, XPTransaction } from '../types';
+import {
+  AnalyticsActivityDay,
+  AnalyticsAttributeProgress,
+  AnalyticsOverview,
+  AnalyticsSkillProgress,
+  AnalyticsXpPoint,
+  XPTransaction,
+} from '../types';
 
 export async function getAnalyticsOverview() {
   const { data } = await apiClient.get<AnalyticsOverview>('/analytics/overview');
@@ -13,6 +20,11 @@ export async function getAnalyticsXp(days = 30) {
 
 export async function getAnalyticsSkills() {
   const { data } = await apiClient.get<AnalyticsSkillProgress[]>('/analytics/skills');
+  return data;
+}
+
+export async function getAnalyticsAttributes() {
+  const { data } = await apiClient.get<AnalyticsAttributeProgress[]>('/analytics/attributes');
   return data;
 }
 

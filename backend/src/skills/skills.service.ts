@@ -1,11 +1,19 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { calculateLevelState } from '../common/leveling';
 import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdateSkillDto } from './dto/update-skill.dto';
 import { DEFAULT_SKILLS } from './default-skills';
+import { DEFAULT_ATTRIBUTES } from '../attributes/default-attributes';
 
-function serializeSkill(skill: { totalXP: number; level: number; [key: string]: unknown }) {
+const skillInclude = {
+  attribute: { select: { id: true, key: true, name: true, icon: true } },
+} satisfies Prisma.SkillInclude;
+
+type SkillWithAttribute = Prisma.SkillGetPayload<{ include: typeof skillInclude }>;
+
+function serializeSkill(skill: SkillWithAttribute) {
   const { currentLevelXp, xpForNextLevel } = calculateLevelState(skill.totalXP);
   return { ...skill, currentXP: currentLevelXp, xpForNextLevel };
 }
@@ -14,12 +22,20 @@ function serializeSkill(skill: { totalXP: number; level: number; [key: string]: 
 export class SkillsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Suggested skills grouped by attribute, for onboarding and the "Add Skill" picker. */
   getSuggestions() {
-    return DEFAULT_SKILLS;
+    return DEFAULT_ATTRIBUTES.map((attribute) => ({
+      ...attribute,
+      skills: DEFAULT_SKILLS.filter((skill) => skill.attributeKey === attribute.key),
+    }));
   }
 
   async findAll(userId: string) {
-    const skills = await this.prisma.skill.findMany({ where: { userId }, orderBy: { name: 'asc' } });
+    const skills = await this.prisma.skill.findMany({
+      where: { userId },
+      include: skillInclude,
+      orderBy: { name: 'asc' },
+    });
     return skills.map(serializeSkill);
   }
 
@@ -47,18 +63,40 @@ export class SkillsService {
   }
 
   async create(userId: string, dto: CreateSkillDto) {
-    const existing = await this.prisma.skill.findFirst({ where: { userId, name: dto.name } });
-    if (existing) throw new ConflictException('A skill with this name already exists');
+    const attribute = await this.prisma.attribute.findUnique({ where: { id: dto.attributeId } });
+    if (!attribute || attribute.userId !== userId) {
+      throw new NotFoundException('Attribute not found');
+    }
+
+    const existing = await this.prisma.skill.findFirst({
+      where: { userId, attributeId: dto.attributeId, name: dto.name },
+    });
+    if (existing) throw new ConflictException('A skill with this name already exists under this attribute');
 
     const skill = await this.prisma.skill.create({
-      data: { userId, name: dto.name, description: dto.description, icon: dto.icon },
+      data: {
+        userId,
+        attributeId: dto.attributeId,
+        name: dto.name,
+        description: dto.description,
+        icon: dto.icon,
+      },
+      include: skillInclude,
     });
     return serializeSkill(skill);
   }
 
   async update(userId: string, id: string, dto: UpdateSkillDto) {
     await this.getOwnedSkill(userId, id);
-    const skill = await this.prisma.skill.update({ where: { id }, data: dto });
+
+    if (dto.attributeId) {
+      const attribute = await this.prisma.attribute.findUnique({ where: { id: dto.attributeId } });
+      if (!attribute || attribute.userId !== userId) {
+        throw new NotFoundException('Attribute not found');
+      }
+    }
+
+    const skill = await this.prisma.skill.update({ where: { id }, data: dto, include: skillInclude });
     return serializeSkill(skill);
   }
 
@@ -78,7 +116,7 @@ export class SkillsService {
   }
 
   private async getOwnedSkill(userId: string, id: string) {
-    const skill = await this.prisma.skill.findUnique({ where: { id } });
+    const skill = await this.prisma.skill.findUnique({ where: { id }, include: skillInclude });
     if (!skill) throw new NotFoundException('Skill not found');
     if (skill.userId !== userId) throw new ForbiddenException();
     return skill;

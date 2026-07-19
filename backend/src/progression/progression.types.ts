@@ -16,6 +16,7 @@ export interface CompletionResult {
   levelUp: boolean;
   newLevel: number;
   skillResults: Array<{ skillId: string; leveledUp: boolean; newLevel: number }>;
+  attributeResults: Array<{ attributeId: string; leveledUp: boolean; newLevel: number }>;
   achievementsUnlocked: string[];
   streak?: { currentStreak: number; longestStreak: number };
 }

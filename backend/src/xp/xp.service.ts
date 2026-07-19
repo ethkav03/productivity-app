@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { calculateLevelState } from '../common/leveling';
-import { AwardXpParams, LevelChangeResult, SkillXpResult, XpAwardResult } from './xp.types';
+import { AttributeXpResult, AwardXpParams, LevelChangeResult, SkillXpResult, XpAwardResult } from './xp.types';
 
 /**
  * Centralised XP ledger. Every source of XP in the app (quests, habits,
@@ -41,6 +41,7 @@ export class XpService {
       };
 
       const skills: SkillXpResult[] = [];
+      const attributes: AttributeXpResult[] = [];
       const uniqueSkillIds = Array.from(new Set(skillIds));
 
       for (const skillId of uniqueSkillIds) {
@@ -64,9 +65,33 @@ export class XpService {
           newLevel: newSkillState.level,
           leveledUp: newSkillState.level > previousSkillState.level,
         });
+
+        // Every skill's XP also flows up to the attribute it belongs to.
+        // Deliberately not deduplicated across skills sharing an attribute -
+        // same rationale as skills each getting the full XP amount.
+        await tx.xPTransaction.create({
+          data: { userId, attributeId: skill.attributeId, amount, sourceType, sourceId, note },
+        });
+
+        const attribute = await tx.attribute.findUniqueOrThrow({ where: { id: skill.attributeId } });
+        const previousAttributeState = calculateLevelState(attribute.totalXP);
+        const newAttributeTotalXp = attribute.totalXP + amount;
+        const newAttributeState = calculateLevelState(newAttributeTotalXp);
+
+        await tx.attribute.update({
+          where: { id: skill.attributeId },
+          data: { totalXP: newAttributeTotalXp, level: newAttributeState.level },
+        });
+
+        attributes.push({
+          attributeId: skill.attributeId,
+          previousLevel: previousAttributeState.level,
+          newLevel: newAttributeState.level,
+          leveledUp: newAttributeState.level > previousAttributeState.level,
+        });
       }
 
-      return { xpGained: amount, character, skills };
+      return { xpGained: amount, character, skills, attributes };
     });
   }
 

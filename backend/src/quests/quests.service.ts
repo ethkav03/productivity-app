@@ -15,7 +15,7 @@ import { CreateQuestDto } from './dto/create-quest.dto';
 import { UpdateQuestDto } from './dto/update-quest.dto';
 
 const questInclude = {
-  questSkills: { include: { skill: true } },
+  questSkills: { include: { skill: { include: { attribute: true } } } },
   goal: { select: { id: true, title: true } },
 } satisfies Prisma.QuestInclude;
 

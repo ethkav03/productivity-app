@@ -28,6 +28,16 @@ export function useCelebration() {
           push({ variant: 'levelup', title: 'Skill level up!', description: `Reached Level ${skill.newLevel}.` });
         });
 
+      result.attributeResults
+        .filter((attribute) => attribute.leveledUp)
+        .forEach((attribute) => {
+          push({
+            variant: 'levelup',
+            title: 'Attribute level up!',
+            description: `Reached Level ${attribute.newLevel}.`,
+          });
+        });
+
       result.achievementsUnlocked.forEach((name) => {
         push({ variant: 'achievement', title: 'Achievement unlocked', description: name });
       });

@@ -15,9 +15,28 @@ export interface PublicUser {
   createdAt: string;
 }
 
+export type AttributeKey =
+  | 'PHYSICAL'
+  | 'INTELLIGENCE'
+  | 'DISCIPLINE'
+  | 'ENERGY'
+  | 'SOCIAL'
+  | 'WEALTH'
+  | 'CREATIVITY'
+  | 'WISDOM';
+
+export interface AttributeSummary {
+  id: string;
+  key: AttributeKey;
+  name: string;
+  icon: string | null;
+}
+
 export interface Skill {
   id: string;
   userId: string;
+  attributeId: string;
+  attribute: AttributeSummary;
   name: string;
   description: string | null;
   icon: string | null;
@@ -35,10 +54,41 @@ export interface SkillDetail extends Skill {
   recentActivity: XPTransaction[];
 }
 
+/** A user's attribute record, with their skills under it nested (from GET /attributes). */
+export interface Attribute {
+  id: string;
+  userId: string;
+  key: AttributeKey;
+  name: string;
+  description: string | null;
+  icon: string | null;
+  level: number;
+  totalXP: number;
+  currentXP: number;
+  xpForNextLevel: number;
+  createdAt: string;
+  updatedAt: string;
+  skills: Skill[];
+}
+
+export interface AttributeDetail extends Attribute {
+  weeklyXP: number;
+  recentActivity: XPTransaction[];
+}
+
 export interface DefaultSkillDefinition {
   name: string;
   description: string;
+  attributeKey: AttributeKey;
+}
+
+/** GET /skills/suggestions - default skills grouped under each of the 8 fixed attributes. */
+export interface DefaultAttributeGroup {
+  key: AttributeKey;
+  name: string;
+  description: string;
   icon: string;
+  skills: DefaultSkillDefinition[];
 }
 
 export type GoalType = 'NUMERIC' | 'COMPLETION' | 'BINARY';
@@ -119,7 +169,8 @@ export type AchievementRequirementType =
   | 'HABITS_COMPLETED'
   | 'SKILL_LEVEL_REACHED'
   | 'SKILL_ACTIVITY_COUNT'
-  | 'GOALS_CREATED';
+  | 'GOALS_CREATED'
+  | 'ATTRIBUTE_LEVEL_REACHED';
 
 export interface Achievement {
   id: string;
@@ -130,6 +181,7 @@ export interface Achievement {
   requirementType: AchievementRequirementType;
   requirementValue: number;
   skillName: string | null;
+  attributeKey: AttributeKey | null;
   createdAt: string;
 }
 
@@ -185,6 +237,7 @@ export interface CompletionResult {
   levelUp: boolean;
   newLevel: number;
   skillResults: Array<{ skillId: string; leveledUp: boolean; newLevel: number }>;
+  attributeResults: Array<{ attributeId: string; leveledUp: boolean; newLevel: number }>;
   achievementsUnlocked: string[];
   streak?: { currentStreak: number; longestStreak: number };
 }
@@ -209,6 +262,16 @@ export interface AnalyticsXpPoint {
 export interface AnalyticsSkillProgress {
   skillId: string;
   name: string;
+  level: number;
+  totalXP: number;
+  weeklyXP: number;
+}
+
+export interface AnalyticsAttributeProgress {
+  attributeId: string;
+  key: AttributeKey;
+  name: string;
+  icon: string | null;
   level: number;
   totalXP: number;
   weeklyXP: number;
