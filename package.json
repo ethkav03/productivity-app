@@ -1,0 +1,20 @@
+{
+  "name": "life-rpg",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Life RPG - a gamified personal development platform where real-world actions become character progression.",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev:backend": "npm run start:dev --workspace=backend",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "build": "npm run build --workspace=backend && npm run build --workspace=frontend",
+    "prisma:generate": "npm run prisma:generate --workspace=backend",
+    "prisma:migrate": "npm run prisma:migrate --workspace=backend",
+    "prisma:seed": "npm run prisma:seed --workspace=backend",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down"
+  }
+}

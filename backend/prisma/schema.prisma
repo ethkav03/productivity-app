@@ -1,0 +1,343 @@
+// Life RPG - Prisma schema
+// See docs/mvp-spec.md ("Section 15: Data Model") for the product-level description.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum GoalType {
+  NUMERIC
+  COMPLETION
+  BINARY
+}
+
+enum GoalStatus {
+  ACTIVE
+  COMPLETED
+  ABANDONED
+}
+
+enum QuestType {
+  ONE_TIME
+  RECURRING
+  DEADLINE
+  MILESTONE
+}
+
+enum QuestDifficulty {
+  EASY
+  MEDIUM
+  HARD
+  EPIC
+  LEGENDARY
+}
+
+enum QuestStatus {
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+enum HabitFrequency {
+  DAILY
+  DAYS_OF_WEEK
+  TIMES_PER_WEEK
+  MONTHLY
+}
+
+enum XPSourceType {
+  QUEST_COMPLETION
+  HABIT_COMPLETION
+  GOAL_COMPLETION
+  ACHIEVEMENT_BONUS
+  CORRECTION
+}
+
+enum AchievementRequirementType {
+  LEVEL_REACHED
+  STREAK_LENGTH
+  QUESTS_COMPLETED
+  GOALS_COMPLETED
+  HABITS_COMPLETED
+  SKILL_LEVEL_REACHED
+  SKILL_ACTIVITY_COUNT
+  GOALS_CREATED
+}
+
+enum NotificationType {
+  HABIT_REMINDER
+  QUEST_DEADLINE
+  STREAK_WARNING
+  LEVEL_UP
+  ACHIEVEMENT_UNLOCK
+  GOAL_MILESTONE
+}
+
+// ---------------------------------------------------------------------------
+// Core entities
+// ---------------------------------------------------------------------------
+
+model User {
+  id                 String   @id @default(uuid())
+  email              String   @unique
+  username           String   @unique
+  passwordHash       String
+  avatar             String?
+  hashedRefreshToken String?
+
+  level          Int @default(1)
+  totalXP        Int @default(0)
+  currentStreak  Int @default(0)
+  longestStreak  Int @default(0)
+  lastActivityAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  skills            Skill[]
+  goals             Goal[]
+  quests            Quest[]
+  habits            Habit[]
+  habitCompletions  HabitCompletion[]
+  xpTransactions    XPTransaction[]
+  userAchievements  UserAchievement[]
+  notifications     Notification[]
+
+  @@map("users")
+}
+
+model Skill {
+  id          String  @id @default(uuid())
+  userId      String
+  name        String
+  description String?
+  icon        String?
+  isDefault   Boolean @default(false)
+
+  level   Int @default(1)
+  totalXP Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questSkills    QuestSkill[]
+  habitSkills    HabitSkill[]
+  goalSkills     GoalSkill[]
+  xpTransactions XPTransaction[]
+
+  @@unique([userId, name])
+  @@index([userId])
+  @@map("skills")
+}
+
+model Goal {
+  id          String  @id @default(uuid())
+  userId      String
+  title       String
+  description String?
+  category    String?
+  type        GoalType   @default(BINARY)
+  status      GoalStatus @default(ACTIVE)
+
+  targetValue    Float?
+  currentValue   Float   @default(0)
+  unit           String?
+
+  xpReward Int @default(500)
+
+  startDate  DateTime  @default(now())
+  targetDate DateTime?
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  quests     Quest[]
+  goalSkills GoalSkill[]
+
+  @@index([userId])
+  @@map("goals")
+}
+
+model GoalSkill {
+  id      String @id @default(uuid())
+  goalId  String
+  skillId String
+
+  goal  Goal  @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([goalId, skillId])
+  @@map("goal_skills")
+}
+
+model Quest {
+  id          String  @id @default(uuid())
+  userId      String
+  goalId      String?
+  title       String
+  description String?
+
+  type       QuestType       @default(ONE_TIME)
+  difficulty QuestDifficulty @default(MEDIUM)
+  status     QuestStatus     @default(ACTIVE)
+
+  xpReward     Int
+  deadline     DateTime?
+  completedAt  DateTime?
+  lastCompletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal        Goal?        @relation(fields: [goalId], references: [id], onDelete: SetNull)
+  questSkills QuestSkill[]
+
+  @@index([userId])
+  @@index([goalId])
+  @@map("quests")
+}
+
+model QuestSkill {
+  id      String @id @default(uuid())
+  questId String
+  skillId String
+
+  quest Quest @relation(fields: [questId], references: [id], onDelete: Cascade)
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([questId, skillId])
+  @@map("quest_skills")
+}
+
+model Habit {
+  id          String  @id @default(uuid())
+  userId      String
+  title       String
+  description String?
+
+  frequency    HabitFrequency @default(DAILY)
+  daysOfWeek   Int[]          @default([])
+  timesPerWeek Int?
+  timeOfDay    String?
+
+  xpReward      Int     @default(10)
+  isActive      Boolean @default(true)
+  currentStreak Int     @default(0)
+  longestStreak Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  habitSkills HabitSkill[]
+  completions HabitCompletion[]
+
+  @@index([userId])
+  @@map("habits")
+}
+
+model HabitSkill {
+  id      String @id @default(uuid())
+  habitId String
+  skillId String
+
+  habit Habit @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([habitId, skillId])
+  @@map("habit_skills")
+}
+
+model HabitCompletion {
+  id          String   @id @default(uuid())
+  habitId     String
+  userId      String
+  periodKey   String
+  completedAt DateTime @default(now())
+
+  habit Habit @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([habitId, periodKey])
+  @@index([userId])
+  @@map("habit_completions")
+}
+
+model XPTransaction {
+  id         String       @id @default(uuid())
+  userId     String
+  skillId    String?
+  amount     Int
+  sourceType XPSourceType
+  sourceId   String?
+  note       String?
+  createdAt  DateTime     @default(now())
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skill Skill? @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([skillId])
+  @@index([userId, createdAt])
+  @@map("xp_transactions")
+}
+
+model Achievement {
+  id                String                     @id @default(uuid())
+  key               String                     @unique
+  name              String
+  description       String
+  icon              String?
+  requirementType   AchievementRequirementType
+  requirementValue  Int
+  skillName         String?
+
+  createdAt DateTime @default(now())
+
+  userAchievements UserAchievement[]
+
+  @@map("achievements")
+}
+
+model UserAchievement {
+  id            String   @id @default(uuid())
+  userId        String
+  achievementId String
+  unlockedAt    DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+  @@index([userId])
+  @@map("user_achievements")
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, read])
+  @@map("notifications")
+}
