@@ -1,4 +1,8 @@
 FROM node:20-alpine AS base
+# Prisma's engine binaries need OpenSSL to be present to detect the right
+# variant (linux-musl-openssl-3.0.x) - without this the schema/query engine
+# fails to start with a non-JSON error at runtime, not just a warning.
+RUN apk add --no-cache openssl
 WORKDIR /app
 
 FROM base AS deps
@@ -19,4 +23,4 @@ COPY --from=build /app/prisma ./prisma
 COPY package.json ./
 
 EXPOSE 3001
-CMD ["node", "dist/main"]
+CMD ["node", "dist/src/main"]

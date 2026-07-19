@@ -34,7 +34,10 @@ services:
       CORS_ORIGIN: http://localhost:3000
     ports:
       - '3001:3001'
-    command: sh -c "npx prisma migrate deploy && npx prisma db seed && node dist/main"
+    # Seed via the already-built dist/prisma/seed.js (nest build compiles it
+    # alongside src/) rather than `prisma db seed`'s ts-node invocation -
+    # ts-node's ESM/CJS auto-detection is unreliable in this Alpine image.
+    command: sh -c "npx prisma migrate deploy && node dist/prisma/seed.js && node dist/src/main"
 
   frontend:
     build:
