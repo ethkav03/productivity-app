@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { QuestDifficulty, QuestType } from '@prisma/client';
+import { QuestCategory, QuestDifficulty, QuestType } from '@prisma/client';
 import {
   IsArray,
   IsEnum,
@@ -39,6 +39,11 @@ export class CreateQuestDto {
   @IsOptional()
   @IsEnum(QuestDifficulty)
   difficulty?: QuestDifficulty;
+
+  @ApiPropertyOptional({ enum: QuestCategory, default: QuestCategory.LONG_TERM, description: '"Quest Board" grouping.' })
+  @IsOptional()
+  @IsEnum(QuestCategory)
+  category?: QuestCategory;
 
   @ApiPropertyOptional()
   @IsOptional()

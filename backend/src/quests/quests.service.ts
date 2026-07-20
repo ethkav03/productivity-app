@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, QuestStatus } from '@prisma/client';
+import { Prisma, QuestCategory, QuestStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProgressionService } from '../progression/progression.service';
 import { CompletionResult } from '../progression/progression.types';
@@ -13,11 +13,14 @@ import { SkillsService } from '../skills/skills.service';
 import { AttributesService } from '../attributes/attributes.service';
 import { getDayKey } from '../common/period';
 import { DIFFICULTY_XP } from '../common/leveling';
+import { findNeglectedAttribute } from '../common/neglected-attribute';
 import { CreateQuestDto } from './dto/create-quest.dto';
 import { UpdateQuestDto } from './dto/update-quest.dto';
 import { AttributeBonusDto, SkillRewardOverrideDto } from '../common/dto/activity-reward.dto';
 import { QuestRequirementDto } from '../common/dto/quest-requirement.dto';
 import { buildRequirementSnapshot, evaluateRequirements } from './quest-requirements';
+
+const SYSTEM_QUEST_REFRESH_DAYS = 7;
 
 const requirementInclude = {
   skill: { select: { name: true } },
@@ -179,13 +182,16 @@ export class QuestsService {
     }
   }
 
-  async findAll(userId: string, filters: { status?: QuestStatus; goalId?: string }) {
+  async findAll(userId: string, filters: { status?: QuestStatus; goalId?: string; category?: QuestCategory }) {
+    await this.ensureSystemQuest(userId);
+
     const [quests, snapshot] = await Promise.all([
       this.prisma.quest.findMany({
         where: {
           userId,
           ...(filters.status && { status: filters.status }),
           ...(filters.goalId && { goalId: filters.goalId }),
+          ...(filters.category && { category: filters.category }),
         },
         include: questInclude,
         orderBy: { createdAt: 'desc' },
@@ -226,6 +232,7 @@ export class QuestsService {
         description: dto.description,
         type,
         difficulty,
+        category: dto.category,
         xpReward,
         goalId: dto.goalId,
         deadline: dto.deadline ? new Date(dto.deadline) : undefined,
@@ -437,6 +444,40 @@ export class QuestsService {
     }
 
     return results;
+  }
+
+  /**
+   * "Quest Board" System quests: generated lazily rather than via a
+   * scheduled job. If the user has no SYSTEM-category quest created in the
+   * last SYSTEM_QUEST_REFRESH_DAYS, creates one nudging their most-neglected
+   * attribute (shared heuristic with Daily/Weekly Challenges - see
+   * findNeglectedAttribute). A no-op if the user has no skills anywhere yet
+   * (nothing sensible to tag), so brand-new accounts don't get a quest
+   * before they've created their first skill.
+   */
+  private async ensureSystemQuest(userId: string): Promise<void> {
+    const refreshCutoff = new Date(Date.now() - SYSTEM_QUEST_REFRESH_DAYS * 24 * 60 * 60 * 1000);
+    const recentSystemQuest = await this.prisma.quest.findFirst({
+      where: { userId, category: 'SYSTEM', createdAt: { gte: refreshCutoff } },
+      select: { id: true },
+    });
+    if (recentSystemQuest) return;
+
+    const neglected = await findNeglectedAttribute(this.prisma, userId, { requireSkill: true });
+    if (!neglected || !neglected.skill) return;
+
+    await this.prisma.quest.create({
+      data: {
+        userId,
+        title: 'Balance Your Build',
+        description: `${neglected.attributeName} has received the least attention lately - complete one activity to bring it back into balance.`,
+        type: 'ONE_TIME',
+        difficulty: 'MEDIUM',
+        category: 'SYSTEM',
+        xpReward: DIFFICULTY_XP.MEDIUM,
+        questSkills: { create: [{ skillId: neglected.skill.id }] },
+      },
+    });
   }
 
   private async assertOwnedGoal(userId: string, goalId: string): Promise<void> {

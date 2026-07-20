@@ -12,7 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { QuestStatus } from '@prisma/client';
+import { QuestCategory, QuestStatus } from '@prisma/client';
 import { QuestsService } from './quests.service';
 import { CreateQuestDto } from './dto/create-quest.dto';
 import { UpdateQuestDto } from './dto/update-quest.dto';
@@ -31,8 +31,9 @@ export class QuestsController {
     @CurrentUser() user: AuthenticatedUser,
     @Query('status') status?: QuestStatus,
     @Query('goalId') goalId?: string,
+    @Query('category') category?: QuestCategory,
   ) {
-    return this.questsService.findAll(user.userId, { status, goalId });
+    return this.questsService.findAll(user.userId, { status, goalId, category });
   }
 
   @Post()

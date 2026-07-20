@@ -4,6 +4,33 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-20 — Quest Board
+
+Second slice of "Sprint 2: Quest Progression" (`docs/feature-roadmap.md`) - Phase 1 Feature 2,
+on its own branch (`feature/quest-board`) per the new one-branch-per-feature agreement.
+
+Added `Quest.category` (migration `20260720180000_quest_board`): `DAILY`, `WEEKLY`, `LONG_TERM`
+(the default - existing quests all backfilled here), or `SYSTEM`. The existing `/quests` page
+gained a category pill-filter row alongside its Active/Completed status tabs (`GET
+/quests?category=`), rather than becoming a new separate page - the roadmap's "Quest Board" turned
+out to be a filtering facet on the list the page already showed, not a distinct screen. A
+non-Long-Term category now also shows as a badge on each quest card.
+
+`SYSTEM` quests are auto-generated: a new shared `findNeglectedAttribute` helper
+(`backend/src/common/neglected-attribute.ts`) finds whichever attribute earned the least XP in the
+trailing 7 days among ones the user has an actual skill under (skipping attributes with no skill
+to tag), and `QuestsService.ensureSystemQuest` - called at the top of every `GET /quests` - creates
+one "Balance Your Build" quest targeting it if the user has no `SYSTEM` quest from the last 7 days.
+Lazy/on-read generation rather than a scheduled job, since no cron infrastructure exists in the
+app yet. `findNeglectedAttribute` was deliberately built as a `common/` utility rather than owned
+by `QuestsModule`, so the next slice (Daily/Weekly Challenges) can reuse the identical "what's
+neglected" definition instead of drifting into a second heuristic.
+
+Verified via a real-API script (category defaults/filtering; no System quest before the user has
+any skill; exactly one System quest generated once a skill exists, tagged with it; a second fetch
+within the window doesn't duplicate it) and a Playwright browser pass (light + dark) covering the
+dashboard → quests link, the category filter pills, and the category picker in the create modal.
+
 ## 2026-07-20 — Level-gated quests and reward claiming
 
 First slice of "Sprint 2: Quest Progression" (`docs/feature-roadmap.md`) - Phase 1 Feature 1.

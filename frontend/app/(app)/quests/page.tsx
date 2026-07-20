@@ -15,7 +15,7 @@ import { getGoals } from '@/lib/api/goals';
 import { getSkills } from '@/lib/api/skills';
 import { getAttributes } from '@/lib/api/attributes';
 import { getAchievements } from '@/lib/api/achievements';
-import { Quest, QuestDifficulty, QuestRequirementInput, QuestType } from '@/lib/types';
+import { Quest, QuestCategory, QuestDifficulty, QuestRequirementInput, QuestType } from '@/lib/types';
 import { AttributeDots } from '@/components/ui/attribute-dots';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -52,12 +52,20 @@ const DIFFICULTY_BADGE_VARIANT: Record<QuestDifficulty, 'outline' | 'primary' | 
 
 const QUEST_TYPES: QuestType[] = ['ONE_TIME', 'RECURRING', 'DEADLINE', 'MILESTONE'];
 const QUEST_DIFFICULTIES: QuestDifficulty[] = ['EASY', 'MEDIUM', 'HARD', 'EPIC', 'LEGENDARY'];
+const QUEST_CATEGORIES: QuestCategory[] = ['DAILY', 'WEEKLY', 'LONG_TERM', 'SYSTEM'];
 
 const TYPE_LABELS: Record<QuestType, string> = {
   ONE_TIME: 'One-time',
   RECURRING: 'Recurring',
   DEADLINE: 'Deadline',
   MILESTONE: 'Milestone',
+};
+
+const CATEGORY_LABELS: Record<QuestCategory, string> = {
+  DAILY: 'Daily',
+  WEEKLY: 'Weekly',
+  LONG_TERM: 'Long-Term',
+  SYSTEM: 'System',
 };
 
 const DIFFICULTY_LABELS: Record<QuestDifficulty, string> = {
@@ -74,6 +82,7 @@ const createQuestSchema = z
     description: z.string().max(2000, 'Keep it under 2000 characters').optional(),
     type: z.enum(['ONE_TIME', 'RECURRING', 'DEADLINE', 'MILESTONE']),
     difficulty: z.enum(['EASY', 'MEDIUM', 'HARD', 'EPIC', 'LEGENDARY']),
+    category: z.enum(['DAILY', 'WEEKLY', 'LONG_TERM', 'SYSTEM']),
     goalId: z.string().optional(),
     skillIds: z.array(z.string()),
     deadline: z.string().optional(),
@@ -87,6 +96,7 @@ type CreateQuestFormValues = z.infer<typeof createQuestSchema>;
 
 export default function QuestsPage() {
   const [status, setStatus] = useState<QuestStatusTab>('ACTIVE');
+  const [category, setCategory] = useState<QuestCategory | 'ALL'>('ALL');
   const [createOpen, setCreateOpen] = useState(false);
   const queryClient = useQueryClient();
   const { refreshUser } = useAuth();
@@ -94,8 +104,8 @@ export default function QuestsPage() {
   const { push } = useToast();
 
   const questsQuery = useQuery({
-    queryKey: ['quests', status],
-    queryFn: () => getQuests({ status }),
+    queryKey: ['quests', status, category],
+    queryFn: () => getQuests({ status, category: category === 'ALL' ? undefined : category }),
   });
 
   const completeMutation = useMutation({
@@ -140,19 +150,36 @@ export default function QuestsPage() {
         </Button>
       </div>
 
-      <div className="inline-flex rounded-xl border border-border bg-surface p-1">
-        {(['ACTIVE', 'COMPLETED'] as const).map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            onClick={() => setStatus(tab)}
-            className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${
-              status === tab ? 'bg-primary text-primary-foreground' : 'text-muted hover:text-foreground'
-            }`}
-          >
-            {tab === 'ACTIVE' ? 'Active' : 'Completed'}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex rounded-xl border border-border bg-surface p-1">
+          {(['ACTIVE', 'COMPLETED'] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setStatus(tab)}
+              className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${
+                status === tab ? 'bg-primary text-primary-foreground' : 'text-muted hover:text-foreground'
+              }`}
+            >
+              {tab === 'ACTIVE' ? 'Active' : 'Completed'}
+            </button>
+          ))}
+        </div>
+
+        <div className="inline-flex flex-wrap gap-1 rounded-xl border border-border bg-surface p-1">
+          {(['ALL', ...QUEST_CATEGORIES] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setCategory(tab)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                category === tab ? 'bg-primary text-primary-foreground' : 'text-muted hover:text-foreground'
+              }`}
+            >
+              {tab === 'ALL' ? 'All' : CATEGORY_LABELS[tab]}
+            </button>
+          ))}
+        </div>
       </div>
 
       {questsQuery.isLoading ? (
@@ -228,6 +255,7 @@ function QuestCard({ quest, status, onComplete, isCompleting, onClaim, isClaimin
 
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
         <Badge variant="success">+{quest.xpReward} XP</Badge>
+        {quest.category !== 'LONG_TERM' && <Badge variant="accent">{CATEGORY_LABELS[quest.category]}</Badge>}
         <AttributeDots skills={quest.skills} />
         {quest.goal && (
           <Badge variant="outline">
@@ -335,6 +363,7 @@ function CreateQuestModal({ open, onClose }: { open: boolean; onClose: () => voi
       description: '',
       type: 'ONE_TIME',
       difficulty: 'EASY',
+      category: 'LONG_TERM',
       goalId: '',
       skillIds: [],
       deadline: '',
@@ -385,6 +414,7 @@ function CreateQuestModal({ open, onClose }: { open: boolean; onClose: () => voi
       description: values.description || undefined,
       type: values.type,
       difficulty: values.difficulty,
+      category: values.category,
       goalId: values.goalId ? values.goalId : undefined,
       skillIds: values.skillIds,
       skillRewardOverrides: skillRewardOverrides.length ? skillRewardOverrides : undefined,
@@ -432,6 +462,18 @@ function CreateQuestModal({ open, onClose }: { open: boolean; onClose: () => voi
               ))}
             </Select>
             <FieldError>{errors.difficulty?.message}</FieldError>
+          </div>
+
+          <div>
+            <Label htmlFor="category">Board category</Label>
+            <Select id="category" {...register('category')}>
+              {QUEST_CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>
+                  {CATEGORY_LABELS[cat]}
+                </option>
+              ))}
+            </Select>
+            <FieldError>{errors.category?.message}</FieldError>
           </div>
         </div>
 

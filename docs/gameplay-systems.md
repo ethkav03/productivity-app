@@ -42,7 +42,7 @@ Goals → Quests / Habits → Complete them → XP → Skills level up → Attri
 
 Quests, habits, and goals never call `XpService` or `AchievementsService` directly - they all
 funnel through `ProgressionService.completeActivity` (goal creation is the one exception, see
-section 8).
+section 9).
 
 ## 2. The attribute hierarchy
 
@@ -92,7 +92,7 @@ onboarding flow) explicitly creates `Skill` rows, each pointing at exactly one a
 on `model Skill`. This means the same skill name can legitimately exist twice for one user, as
 long as it's under two different attributes - e.g. a skill named "Focus" as a distinct stat under
 both Intelligence and Discipline. Any code that looks up a skill by `(userId, name)` alone (e.g.
-achievement conditions - see section 8) must also disambiguate by attribute when the name isn't
+achievement conditions - see section 9) must also disambiguate by attribute when the name isn't
 unique for that user.
 
 **Default skill suggestions.** `backend/src/skills/default-skills.ts` exports `DEFAULT_SKILLS`, a
@@ -572,7 +572,55 @@ On the frontend, `completeQuest`/`claimQuestReward` (`frontend/src/lib/api/quest
 separate calls; `useCelebration()` only fires after a successful claim (a bare `complete()` moves
 no XP, so there's nothing to celebrate yet) - see `docs/frontend.md`.
 
-## 8. The achievement engine
+## 8. Quest Board and System quests (Feature 2)
+
+### Categories
+
+Every `Quest` has a `category` - `DAILY`, `WEEKLY`, `LONG_TERM`, or `SYSTEM` - defaulting to
+`LONG_TERM` (existing quests from before this feature all backfilled there). Unlike
+locked/unlocked state, `category` **is** stored, not computed - it's a user (or system) choice at
+creation time, not a derived fact about current progress. The frontend's `/quests` page (still the
+same route and nav entry - "Quest Board" is a capability added to the existing page, not a
+separate one) gained a category pill-filter row alongside the existing Active/Completed status
+tabs; `GET /quests?category=` filters server-side.
+
+### System quests: the neglected-attribute heuristic
+
+`QuestsService.ensureSystemQuest(userId)` runs at the top of every `findAll` call. If the caller
+has no `SYSTEM`-category quest created in the last 7 days, it generates one via
+`findNeglectedAttribute` (`backend/src/common/neglected-attribute.ts`):
+
+1. Fetch the user's 8 attributes, their total XP earned in the trailing 7 days (`XPTransaction`
+   rows grouped by `attributeId`, an attribute with zero rows counting as most neglected - the
+   same "attribute-level rows include both skill-cascade and attribute-bonus XP" reasoning as
+   section 3), and all of the user's skills.
+2. Rank attributes by trailing-7-day XP, ascending.
+3. Pick the lowest-ranked attribute that has at least one of the user's own skills under it
+   (`requireSkill: true`) - a "complete an activity tagged with X" instruction is meaningless
+   without an X to tag, so an attribute with zero skills is skipped even if it's technically the
+   most neglected.
+4. If no attribute anywhere has a skill (the user hasn't created any skills yet), generation is
+   skipped entirely - a brand-new account doesn't get a System quest before it has anything to
+   tag one with.
+
+The generated quest: `title: "Balance Your Build"`, `category: 'SYSTEM'`, `type: 'ONE_TIME'`,
+`difficulty: 'MEDIUM'`, tagged with the found skill via a normal `QuestSkill` row - it goes
+through the exact same completion/locking/claiming machinery as any other quest, since it's not a
+distinct kind of entity, just a distinct `category` value with an automated origin.
+
+**Lazy generation, not a scheduled job.** No cron/job-scheduling infrastructure exists in the
+app - "regenerate weekly" is implemented as "check-and-generate-if-stale on read," the same
+pattern Daily/Weekly Challenges (Feature 3) use once built - see `docs/feature-roadmap.md` for
+what's landed. This means a System quest's actual freshness depends on how often the caller
+calls `GET /quests`, not a wall-clock schedule - acceptable since the quest itself doesn't expire
+or need to be time-precise, unlike a Daily/Weekly Challenge.
+
+**Shared with Daily/Weekly Challenges.** `findNeglectedAttribute` is deliberately a `common/`
+utility, not owned by `QuestsModule`, specifically so Challenges' generation (a separate feature)
+can reuse the identical "what's neglected" definition rather than two heuristics quietly drifting
+apart over time.
+
+## 9. The achievement engine
 
 `AchievementsService.checkAndUnlock(userId)` (`backend/src/achievements/achievements.service.ts`)
 is **data-driven**: it does not have a `switch` per achievement *name*. Instead, it loads every
@@ -631,7 +679,7 @@ No other resource module calls `checkAndUnlock` directly - if a future achieveme
 react to something other than a completion or a goal creation, it will need its own explicit call
 site analogous to this one.
 
-## 9. Seeded achievements
+## 10. Seeded achievements
 
 From `backend/prisma/seed.ts` (`ACHIEVEMENTS`, upserted by `key` via `npx prisma db seed`):
 
@@ -655,7 +703,7 @@ That's 13 achievements. None of the current seed rows use `SKILL_LEVEL_REACHED` 
 `SKILL_ACTIVITY_COUNT`, even though `AchievementsService` fully supports both - those two
 requirement types are implemented and ready but not yet exercised by any seeded achievement.
 
-## 10. Friends & Leaderboard
+## 11. Friends & Leaderboard
 
 `FriendsModule` (`backend/src/friends/`) and `LeaderboardModule` (`backend/src/leaderboard/`) add
 a lightweight social layer on top of the character system: a friend-request graph, and a
@@ -709,7 +757,7 @@ resettable leaderboard reads more naturally as "who's ahead this calendar week" 
 in the last 168 hours," and a calendar boundary is what lets "this week's leaderboard" mean the
 same thing to every friend looking at it, regardless of when each of them checks.
 
-## 11. Keep this file in sync
+## 12. Keep this file in sync
 
 This file documents **why** the gameplay mechanics work the way they do, not just what the code
 currently says - the reasoning here (full XP per tagged skill/attribute, the

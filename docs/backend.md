@@ -419,17 +419,19 @@ more skills (`QuestSkill` join rows), and locked behind zero or more prerequisit
 (`QuestRequirement` — "level-gated quests").
 
 - **Imports:** `ProgressionModule`, `SkillsModule`, `AttributesModule`.
-- **Controller:** `QuestsController` — `GET /api/quests` (filterable by `status`/`goalId`),
-  `POST /api/quests`, `GET /api/quests/:id`, `PATCH /api/quests/:id`,
+- **Controller:** `QuestsController` — `GET /api/quests` (filterable by `status`/`goalId`/
+  `category`), `POST /api/quests`, `GET /api/quests/:id`, `PATCH /api/quests/:id`,
   `POST /api/quests/:id/complete`, `POST /api/quests/:id/claim`, `DELETE /api/quests/:id` — all
   guarded.
 - **Exports:** `QuestsService`.
-  - `findAll(userId, filters)` / `findOne(userId, id)` — list/detail, serialized with a
-    `completedToday` flag (recurring quests: last completion was today; one-time: `status ===
-    'COMPLETED'`), `skillRewardOverrides`/`attributeBonuses` ("XP Bundles" — see
-    `docs/gameplay-systems.md`), and `isLocked`/`requirements`/`unclaimedCompletions`
-    ("level-gated quests"/"reward claiming" — see below). Requirement evaluation batches one
-    `buildRequirementSnapshot` call per request (not per quest) via `quest-requirements.ts`.
+  - `findAll(userId, filters)` — calls `ensureSystemQuest` first (see below), then lists,
+    filterable by `status`/`goalId`/`category` ("Quest Board" grouping). `findOne(userId, id)` —
+    detail. Both serialize with a `completedToday` flag (recurring quests: last completion was
+    today; one-time: `status === 'COMPLETED'`), `skillRewardOverrides`/`attributeBonuses` ("XP
+    Bundles" — see `docs/gameplay-systems.md`), and `isLocked`/`requirements`/
+    `unclaimedCompletions` ("level-gated quests"/"reward claiming" — see below). Requirement
+    evaluation batches one `buildRequirementSnapshot` call per request (not per quest) via
+    `quest-requirements.ts`.
   - `create(userId, dto)` — validates owned goal (if linked), owned skills, and requirements
     (`validateRequirements`); defaults `difficulty: MEDIUM`, `type: ONE_TIME`, and `xpReward`
     from `DIFFICULTY_XP[difficulty]` if not given; creates the quest and its `QuestSkill` rows
@@ -458,7 +460,10 @@ more skills (`QuestSkill` join rows), and locked behind zero or more prerequisit
     `AttributesService.assertOwnedAttributeIds` for `attributeBonuses`), `validateRequirements`
     (per-type field validation plus ownership checks — delegates to `SkillsService`/
     `AttributesService`/`getOwnedQuest`/`assertOwnedGoal`; rejects a `QUEST_COMPLETED`
-    requirement pointing at the quest's own id on update).
+    requirement pointing at the quest's own id on update), `ensureSystemQuest(userId)` — "Quest
+    Board" System quests: if the caller has no `SYSTEM`-category quest created in the last 7
+    days, generates one titled "Balance Your Build" targeting `findNeglectedAttribute`'s result
+    (a no-op if the caller has no skills anywhere yet). Called at the top of every `findAll`.
 - **`backend/src/quests/quest-requirements.ts`** (plain utility, not a provider):
   `buildRequirementSnapshot(prisma, userId)` batch-fetches the user's character level, skill
   levels, attribute levels, per-skill activity counts (`XPTransaction` grouped by `skillId`),
@@ -688,6 +693,19 @@ directly wherever needed rather than injected.
   `previousStreak + 1`; anything else (gap) → resets to `1`. Shared by the character's streak
   (`ProgressionService.updateCharacterStreak`) and each habit's own streak
   (`HabitsService.complete`).
+
+### `neglected-attribute.ts`
+
+- `findNeglectedAttribute(prisma, userId, { requireSkill? })` — finds the user's most-neglected
+  attribute: the one with the lowest total XP earned in the trailing 7 days (zero rows in the
+  window counts as most neglected). `requireSkill: true` skips candidates with no skill under
+  them at all, falling through to the next-most-neglected attribute that has one - "complete an
+  activity tagged with this attribute's skill" is meaningless without a skill to tag. Returns
+  `{ attributeId, attributeKey, attributeName, windowXp, skill: { id, name } | null }`, or `null`
+  if the user has no attributes (shouldn't happen) or, with `requireSkill`, no skills anywhere.
+  Shared by `QuestsService.ensureSystemQuest` ("Quest Board" System quests) and Daily/Weekly
+  Challenges, so "what's been neglected" means the same thing in both places — see
+  `docs/gameplay-systems.md`.
 
 ### `decorators/current-user.decorator.ts`
 

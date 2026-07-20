@@ -135,6 +135,8 @@ export interface Goal {
 export type QuestType = 'ONE_TIME' | 'RECURRING' | 'DEADLINE' | 'MILESTONE';
 export type QuestDifficulty = 'EASY' | 'MEDIUM' | 'HARD' | 'EPIC' | 'LEGENDARY';
 export type QuestStatus = 'ACTIVE' | 'COMPLETED' | 'ARCHIVED';
+/** "Quest Board" grouping. SYSTEM quests are auto-generated (see docs/gameplay-systems.md), not user-created. */
+export type QuestCategory = 'DAILY' | 'WEEKLY' | 'LONG_TERM' | 'SYSTEM';
 
 /** "Level-gated quests": a single prerequisite a quest must satisfy before it can be completed. Which fields are set depends on `type`. */
 export type QuestRequirementType = 'LEVEL_THRESHOLD' | 'ACTIVITY_COUNT' | 'ACHIEVEMENT' | 'QUEST_COMPLETED' | 'GOAL_COMPLETED';
@@ -177,6 +179,7 @@ export interface Quest {
   type: QuestType;
   difficulty: QuestDifficulty;
   status: QuestStatus;
+  category: QuestCategory;
   xpReward: number;
   deadline: string | null;
   completedAt: string | null;

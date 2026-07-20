@@ -1,9 +1,10 @@
 import { apiClient } from '../api-client';
-import { CompletionResult, Quest, QuestCompletionRecord, QuestDifficulty, QuestRequirementInput, QuestType, SkillRewardOverride } from '../types';
+import { CompletionResult, Quest, QuestCategory, QuestCompletionRecord, QuestDifficulty, QuestRequirementInput, QuestType, SkillRewardOverride } from '../types';
 
 export interface QuestFilters {
   status?: 'ACTIVE' | 'COMPLETED' | 'ARCHIVED';
   goalId?: string;
+  category?: QuestCategory;
 }
 
 export async function getQuests(filters: QuestFilters = {}) {
@@ -21,6 +22,7 @@ export interface CreateQuestInput {
   description?: string;
   type: QuestType;
   difficulty: QuestDifficulty;
+  category?: QuestCategory;
   xpReward?: number;
   goalId?: string;
   skillIds?: string[];

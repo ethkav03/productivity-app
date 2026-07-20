@@ -199,7 +199,9 @@ export default function DashboardPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Active Quests</CardTitle>
+              <Link href="/quests" className="transition-colors hover:text-primary">
+                <CardTitle>Active Quests</CardTitle>
+              </Link>
             </CardHeader>
             {activeQuests.length === 0 ? (
               <p className="text-sm text-muted">No active quests. Start one to earn bonus XP.</p>

@@ -373,7 +373,7 @@ roadmap Feature per git branch (`feature/level-gated-quests`, `feature/quest-boa
 | 0.3 — XP Bundles | **Done.** Per-skill XP overrides (`QuestSkill`/`HabitSkill`/`GoalSkill.amount`) and attribute-only bonus XP (`ActivityAttributeBonus`), wired into all three creation modals via a shared `RewardBundleEditor`. See `gameplay-systems.md` § "XP Bundles: per-skill overrides and attribute-only bonuses". |
 | 0.1 — Internal domain events | **Done.** `ActivityCompletedEvent` + `EventEmitter2` (`@nestjs/event-emitter`), emitted once per `ProgressionService.completeActivity` call; one listener (`LevelUpNotificationListener`) so far. See `gameplay-systems.md` § "Internal domain events (Feature 0.1)". This was Sprint 1's last item - see `docs/changelog.md` for the closing entry. |
 | 1 — Level-Gated Quests | **Done** (`feature/level-gated-quests`). `QuestRequirement` (5 types) + computed `isLocked`/`requirements` on every serialized quest - locked quests are never hidden. Reward claiming (`QuestCompletion`, `POST /quests/:id/claim`) also landed as part of this branch. See `gameplay-systems.md` § "Level-gated quests and reward claiming (Feature 1)". |
-| 2 — Quest Board | Not yet built. |
+| 2 — Quest Board | **Done** (`feature/quest-board`). `Quest.category` (Daily/Weekly/Long-Term/System) + a category filter added to the existing `/quests` page (not a separate page/route); auto-generated System quests via a shared neglected-attribute heuristic (`findNeglectedAttribute`, also used by Feature 3). See `gameplay-systems.md` § "Quest Board and System quests (Feature 2)". |
 | 3 — Daily and Weekly Challenges | Not yet built. |
 | 4 — XP Balancing and Diminishing Returns | Not yet built - not part of Sprint 2's scope (roadmap's own sprint grouping puts it under "Quest Progression" but it wasn't selected for this pass). |
 | 6 — Level-Up Rewards | Not yet built - Sprint 3 ("Meaningful Progression"). |
@@ -423,3 +423,16 @@ reading it fresh, for no benefit. `REWARD CLAIMED` is represented by `QuestCompl
 rather than a new status value, since a `RECURRING` quest needs *per-completion* claim state, not
 one flag on the quest itself. `FAILED`/`EXPIRED` aren't implemented at all - out of scope for this
 slice; nothing today automatically fails or expires a quest.
+
+**Deliberate deviation:** Feature 2 describes "A single home for the user's current objectives" -
+read as a *new* screen. The actual implementation adds category filtering to the existing
+`/quests` page instead of a separate page/route, since the roadmap's own categories (Daily/
+Weekly/Long-Term/System) are naturally just another facet of the same quest list the page already
+shows, and a second page would either duplicate that list's rendering or need to embed it -
+neither adds enough over "filter the list you're already looking at" to justify a new route.
+System quest generation is also a simpler heuristic than the roadmap's implied full analysis
+engine ("recent XP distribution, recent activity, unused skills, current goals, current level,
+previous challenges") - just "which attribute earned the least XP in the last 7 days, among ones
+with a skill to tag." Real, not a stub, but a narrower first slice; the fuller analysis is closer
+to Phase 4's "Intelligence Layer" in spirit and can build on this heuristic later rather than
+replacing it.

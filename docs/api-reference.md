@@ -374,10 +374,15 @@ List the caller's quests, newest first.
 
 Query params:
 
-| Param    | Type          | Notes                                   |
-| -------- | ------------- | ---------------------------------------- |
-| `status` | `QuestStatus` | `ACTIVE` \| `COMPLETED` \| `ARCHIVED`. Filters exactly. |
-| `goalId` | `string`      | Filter to quests linked to this goal.    |
+| Param      | Type            | Notes                                   |
+| ---------- | --------------- | ---------------------------------------- |
+| `status`   | `QuestStatus`   | `ACTIVE` \| `COMPLETED` \| `ARCHIVED`. Filters exactly. |
+| `goalId`   | `string`        | Filter to quests linked to this goal.    |
+| `category` | `QuestCategory` | `DAILY` \| `WEEKLY` \| `LONG_TERM` \| `SYSTEM`. Filters exactly - "Quest Board" grouping, see below. |
+
+Before listing, ensures the caller has an up-to-date auto-generated `SYSTEM`-category quest (see
+"Quest Board System quests" below) - so every `GET /quests` call, regardless of filters, can
+create one as a side effect if none exists from the last 7 days.
 
 Response: `200 OK`, array of `Quest`:
 
@@ -391,6 +396,7 @@ Response: `200 OK`, array of `Quest`:
   type: 'ONE_TIME' | 'RECURRING' | 'DEADLINE' | 'MILESTONE';
   difficulty: 'EASY' | 'MEDIUM' | 'HARD' | 'EPIC' | 'LEGENDARY';
   status: 'ACTIVE' | 'COMPLETED' | 'ARCHIVED';
+  category: 'DAILY' | 'WEEKLY' | 'LONG_TERM' | 'SYSTEM';  // "Quest Board" grouping - see below
   xpReward: number;
   deadline: string | null;
   completedAt: string | null;
@@ -428,6 +434,7 @@ Request body (`CreateQuestDto`):
   description?: string;   // max 500 chars
   type?: QuestType;              // default 'ONE_TIME'
   difficulty?: QuestDifficulty;  // default 'MEDIUM'
+  category?: QuestCategory;      // default 'LONG_TERM' - "Quest Board" grouping, see below
   xpReward?: number;      // int, >= 1. Defaults from difficulty if omitted (see DIFFICULTY_XP below)
   goalId?: string;        // @IsUUID, must be a goal owned by the caller
   skillIds?: string[];    // each @IsUUID, must all be skills owned by the caller
@@ -460,6 +467,16 @@ Omitting both `skillId` and `attributeId` on a `LEVEL_THRESHOLD` requirement che
 *character's* level. Only the fields relevant to `type` need be set; which combination is
 required per type is a service-level check (`QuestsService.validateRequirements`), not a
 decorator-level DTO rule - see `docs/gameplay-systems.md` for the full mechanics.
+
+**"Quest Board" — `category` and System quests:** every quest has a `category`
+(`DAILY`/`WEEKLY`/`LONG_TERM`/`SYSTEM`), defaulting to `LONG_TERM` if omitted. `SYSTEM` quests are
+normally auto-generated, not created via this endpoint - every `GET /quests` call ensures the
+caller has one from the last 7 days, targeting their most-neglected attribute (lowest XP earned in
+that attribute over the trailing 7 days), tagged with one of the caller's own skills under it. If
+the caller has no skills anywhere yet, no `SYSTEM` quest is generated (nothing sensible to tag).
+Nothing stops a caller from creating their own `SYSTEM`-category quest via this endpoint too -
+`category` isn't restricted by type. See `docs/gameplay-systems.md` for the full heuristic (shared
+with Daily/Weekly Challenges).
 
 If `xpReward` is omitted, it is derived from `difficulty` via a fixed table
 (`DIFFICULTY_XP` in `backend/src/common/leveling.ts`):
@@ -506,6 +523,7 @@ Partially update a quest. Body is `UpdateQuestDto = PartialType(CreateQuestDto) 
   description?: string;
   type?: QuestType;
   difficulty?: QuestDifficulty;
+  category?: QuestCategory;  // "Quest Board" grouping
   xpReward?: number;
   goalId?: string;         // if present (non-null), must be owned by caller
   skillIds?: string[];     // if present, fully replaces the quest's skill tags
