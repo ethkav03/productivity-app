@@ -9,20 +9,23 @@ import { Prisma, QuestStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProgressionService } from '../progression/progression.service';
 import { SkillsService } from '../skills/skills.service';
+import { AttributesService } from '../attributes/attributes.service';
 import { getDayKey } from '../common/period';
 import { DIFFICULTY_XP } from '../common/leveling';
 import { CreateQuestDto } from './dto/create-quest.dto';
 import { UpdateQuestDto } from './dto/update-quest.dto';
+import { AttributeBonusDto, SkillRewardOverrideDto } from '../common/dto/activity-reward.dto';
 
 const questInclude = {
   questSkills: { include: { skill: { include: { attribute: true } } } },
+  attributeBonuses: { include: { attribute: { select: { id: true, key: true, name: true } } } },
   goal: { select: { id: true, title: true } },
 } satisfies Prisma.QuestInclude;
 
 type QuestWithRelations = Prisma.QuestGetPayload<{ include: typeof questInclude }>;
 
 function serializeQuest(quest: QuestWithRelations) {
-  const { questSkills, goal, ...rest } = quest;
+  const { questSkills, attributeBonuses, goal, ...rest } = quest;
 
   const completedToday =
     rest.type === 'RECURRING'
@@ -32,6 +35,14 @@ function serializeQuest(quest: QuestWithRelations) {
   return {
     ...rest,
     skills: questSkills.map((qs) => qs.skill),
+    // "XP Bundles": only skills whose amount was explicitly overridden appear here -
+    // any tagged skill not listed just gets the flat xpReward, as before.
+    skillRewardOverrides: questSkills.filter((qs) => qs.amount != null).map((qs) => ({ skillId: qs.skillId, amount: qs.amount as number })),
+    attributeBonuses: attributeBonuses.map((bonus) => ({
+      attributeId: bonus.attributeId,
+      attributeName: bonus.attribute.name,
+      amount: bonus.amount,
+    })),
     goal: goal ?? null,
     completedToday,
   };
@@ -43,7 +54,32 @@ export class QuestsService {
     private readonly prisma: PrismaService,
     private readonly progressionService: ProgressionService,
     private readonly skillsService: SkillsService,
+    private readonly attributesService: AttributesService,
   ) {}
+
+  /**
+   * "XP Bundles": every skillRewardOverrides entry must target a skill
+   * that's also tagged in skillIds (overriding a skill's amount only makes
+   * sense if the skill is actually associated with the activity), and every
+   * attributeBonuses entry must target an attribute the caller owns.
+   */
+  private async validateRewardBundle(
+    userId: string,
+    skillIds: string[] | undefined,
+    skillRewardOverrides: SkillRewardOverrideDto[] | undefined,
+    attributeBonuses: AttributeBonusDto[] | undefined,
+  ): Promise<void> {
+    if (skillRewardOverrides?.length) {
+      const taggedSkillIds = new Set(skillIds ?? []);
+      const untagged = skillRewardOverrides.find((override) => !taggedSkillIds.has(override.skillId));
+      if (untagged) {
+        throw new BadRequestException(`Skill ${untagged.skillId} has a reward override but isn't tagged in skillIds`);
+      }
+    }
+    if (attributeBonuses?.length) {
+      await this.attributesService.assertOwnedAttributeIds(userId, attributeBonuses.map((bonus) => bonus.attributeId));
+    }
+  }
 
   async findAll(userId: string, filters: { status?: QuestStatus; goalId?: string }) {
     const quests = await this.prisma.quest.findMany({
@@ -73,10 +109,12 @@ export class QuestsService {
     if (dto.skillIds?.length) {
       await this.skillsService.assertOwnedSkillIds(userId, dto.skillIds);
     }
+    await this.validateRewardBundle(userId, dto.skillIds, dto.skillRewardOverrides, dto.attributeBonuses);
 
     const difficulty = dto.difficulty ?? 'MEDIUM';
     const type = dto.type ?? 'ONE_TIME';
     const xpReward = dto.xpReward ?? DIFFICULTY_XP[difficulty];
+    const overrideBySkillId = new Map((dto.skillRewardOverrides ?? []).map((o) => [o.skillId, o.amount]));
 
     const quest = await this.prisma.quest.create({
       data: {
@@ -89,7 +127,10 @@ export class QuestsService {
         goalId: dto.goalId,
         deadline: dto.deadline ? new Date(dto.deadline) : undefined,
         questSkills: {
-          create: (dto.skillIds ?? []).map((skillId) => ({ skillId })),
+          create: (dto.skillIds ?? []).map((skillId) => ({ skillId, amount: overrideBySkillId.get(skillId) })),
+        },
+        attributeBonuses: {
+          create: (dto.attributeBonuses ?? []).map((bonus) => ({ attributeId: bonus.attributeId, amount: bonus.amount })),
         },
       },
       include: questInclude,
@@ -105,17 +146,47 @@ export class QuestsService {
       await this.assertOwnedGoal(userId, dto.goalId);
     }
 
+    const effectiveSkillIds = dto.skillIds;
     if (dto.skillIds) {
       await this.skillsService.assertOwnedSkillIds(userId, dto.skillIds);
+    }
+    if (dto.skillRewardOverrides || dto.attributeBonuses) {
+      // Validate overrides against whichever skillIds are in effect after this update -
+      // the ones being set now, or (if skillIds isn't part of this update) the quest's current tags.
+      const currentSkillIds = effectiveSkillIds ?? (await this.prisma.questSkill.findMany({ where: { questId: id }, select: { skillId: true } })).map((qs) => qs.skillId);
+      await this.validateRewardBundle(userId, currentSkillIds, dto.skillRewardOverrides, dto.attributeBonuses);
+    }
+
+    if (dto.skillIds) {
+      const overrideBySkillId = new Map((dto.skillRewardOverrides ?? []).map((o) => [o.skillId, o.amount]));
       await this.prisma.$transaction([
         this.prisma.questSkill.deleteMany({ where: { questId: id } }),
         this.prisma.questSkill.createMany({
-          data: dto.skillIds.map((skillId) => ({ questId: id, skillId })),
+          data: dto.skillIds.map((skillId) => ({ questId: id, skillId, amount: overrideBySkillId.get(skillId) })),
+        }),
+      ]);
+    } else if (dto.skillRewardOverrides) {
+      // skillIds unchanged, but overrides for already-tagged skills are being updated individually.
+      await this.prisma.$transaction(
+        dto.skillRewardOverrides.map((override) =>
+          this.prisma.questSkill.updateMany({
+            where: { questId: id, skillId: override.skillId },
+            data: { amount: override.amount },
+          }),
+        ),
+      );
+    }
+
+    if (dto.attributeBonuses) {
+      await this.prisma.$transaction([
+        this.prisma.activityAttributeBonus.deleteMany({ where: { questId: id } }),
+        this.prisma.activityAttributeBonus.createMany({
+          data: dto.attributeBonuses.map((bonus) => ({ questId: id, attributeId: bonus.attributeId, amount: bonus.amount })),
         }),
       ]);
     }
 
-    const { skillIds, deadline, ...scalarFields } = dto;
+    const { skillIds, skillRewardOverrides, attributeBonuses, deadline, ...scalarFields } = dto;
 
     const quest = await this.prisma.quest.update({
       where: { id },
@@ -138,7 +209,7 @@ export class QuestsService {
   async complete(userId: string, id: string) {
     const quest = await this.prisma.quest.findUnique({
       where: { id },
-      include: { questSkills: true },
+      include: { questSkills: true, attributeBonuses: true },
     });
     if (!quest) throw new NotFoundException('Quest not found');
     if (quest.userId !== userId) throw new ForbiddenException();
@@ -172,7 +243,8 @@ export class QuestsService {
       sourceType: 'QUEST_COMPLETION',
       sourceId: quest.id,
       sourceName: quest.title,
-      skillIds: quest.questSkills.map((qs) => qs.skillId),
+      skillAwards: quest.questSkills.map((qs) => ({ skillId: qs.skillId, amount: qs.amount ?? undefined })),
+      attributeBonuses: quest.attributeBonuses.map((bonus) => ({ attributeId: bonus.attributeId, amount: bonus.amount })),
     });
   }
 

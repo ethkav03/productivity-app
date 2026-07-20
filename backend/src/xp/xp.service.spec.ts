@@ -64,7 +64,7 @@ describe('XpService.awardXp', () => {
     const tx = createMockTx({ skill: { attributeId: 'attr-strength' } });
     const { service } = createService(tx);
 
-    await service.awardXp({ userId: 'u1', amount: 100, sourceType: 'QUEST_COMPLETION', skillIds: ['skill-strength'] });
+    await service.awardXp({ userId: 'u1', amount: 100, sourceType: 'QUEST_COMPLETION', skillAwards: [{ skillId: 'skill-strength' }] });
 
     expect(tx.xPTransaction.create).toHaveBeenCalledTimes(3);
     const rows = tx.xPTransaction.create.mock.calls.map((call) => call[0].data);
@@ -104,10 +104,107 @@ describe('XpService.awardXp', () => {
     const tx = createMockTx();
     const { service } = createService(tx);
 
-    await service.awardXp({ userId: 'u1', amount: 20, sourceType: 'HABIT_COMPLETION', skillIds: ['skill-1', 'skill-1'] });
+    await service.awardXp({
+      userId: 'u1',
+      amount: 20,
+      sourceType: 'HABIT_COMPLETION',
+      skillAwards: [{ skillId: 'skill-1' }, { skillId: 'skill-1' }],
+    });
 
     // 1 character row + 1 skill row + 1 attribute row, not 5
     expect(tx.xPTransaction.create).toHaveBeenCalledTimes(3);
+  });
+
+  it('XP Bundles: a per-skill override amount replaces the character amount for that skill and its attribute, not the character row', async () => {
+    const tx = createMockTx({ skill: { attributeId: 'attr-physical' } });
+    const { service } = createService(tx);
+
+    await service.awardXp({
+      userId: 'u1',
+      amount: 100,
+      sourceType: 'QUEST_COMPLETION',
+      skillAwards: [{ skillId: 'skill-strength', amount: 250 }],
+    });
+
+    const rows = tx.xPTransaction.create.mock.calls.map((call) => call[0].data);
+    const characterRow = rows.find((r) => !r.skillId && !r.attributeId);
+    const skillRow = rows.find((r) => r.skillId);
+    const attributeRow = rows.find((r) => r.attributeId);
+
+    expect(characterRow.amount).toBe(100); // untouched - the override is skill-scoped only
+    expect(skillRow.amount).toBe(250);
+    expect(attributeRow.amount).toBe(250); // the skill's own amount cascades, not the character's
+  });
+
+  it('XP Bundles: an omitted per-skill amount falls back to the character amount (pre-Bundles behavior)', async () => {
+    const tx = createMockTx();
+    const { service } = createService(tx);
+
+    await service.awardXp({
+      userId: 'u1',
+      amount: 60,
+      sourceType: 'QUEST_COMPLETION',
+      skillAwards: [{ skillId: 'skill-1' }], // no amount override
+    });
+
+    const rows = tx.xPTransaction.create.mock.calls.map((call) => call[0].data);
+    const skillRow = rows.find((r) => r.skillId);
+    expect(skillRow.amount).toBe(60);
+  });
+
+  it('XP Bundles: attribute bonuses credit an attribute directly, with no tagged skill and no effect on the character row', async () => {
+    const tx = createMockTx();
+    const { service } = createService(tx);
+
+    const result = await service.awardXp({
+      userId: 'u1',
+      amount: 100,
+      sourceType: 'QUEST_COMPLETION',
+      attributeBonuses: [{ attributeId: 'attr-discipline', amount: 50 }],
+    });
+
+    expect(tx.xPTransaction.create).toHaveBeenCalledTimes(2); // 1 character + 1 attribute bonus, no skill row
+    const rows = tx.xPTransaction.create.mock.calls.map((call) => call[0].data);
+    const characterRow = rows.find((r) => !r.skillId && !r.attributeId);
+    const bonusRow = rows.find((r) => r.attributeId);
+
+    expect(characterRow.amount).toBe(100);
+    expect(bonusRow).toMatchObject({ attributeId: 'attr-discipline', amount: 50 });
+    expect(bonusRow.skillId).toBeUndefined();
+    expect(result.attributes).toEqual([
+      expect.objectContaining({ attributeId: 'attr-discipline' }),
+    ]);
+  });
+
+  it('XP Bundles: deduplicates repeated attribute bonuses in the same award', async () => {
+    const tx = createMockTx();
+    const { service } = createService(tx);
+
+    await service.awardXp({
+      userId: 'u1',
+      amount: 10,
+      sourceType: 'QUEST_COMPLETION',
+      attributeBonuses: [
+        { attributeId: 'attr-1', amount: 20 },
+        { attributeId: 'attr-1', amount: 20 },
+      ],
+    });
+
+    expect(tx.xPTransaction.create).toHaveBeenCalledTimes(2); // 1 character + 1 bonus, not 3
+  });
+
+  it('XP Bundles: rejects a non-positive per-skill override amount', async () => {
+    const { service } = createService(createMockTx());
+    await expect(
+      service.awardXp({ userId: 'u1', amount: 50, sourceType: 'QUEST_COMPLETION', skillAwards: [{ skillId: 's1', amount: 0 }] }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('XP Bundles: rejects a non-positive attribute bonus amount', async () => {
+    const { service } = createService(createMockTx());
+    await expect(
+      service.awardXp({ userId: 'u1', amount: 50, sourceType: 'QUEST_COMPLETION', attributeBonuses: [{ attributeId: 'a1', amount: -5 }] }),
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('reports a level-up when cumulative XP crosses a level boundary', async () => {

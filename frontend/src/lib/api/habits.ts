@@ -1,5 +1,5 @@
 import { apiClient } from '../api-client';
-import { CompletionResult, Habit, HabitFrequency } from '../types';
+import { CompletionResult, Habit, HabitFrequency, SkillRewardOverride } from '../types';
 
 export async function getHabits() {
   const { data } = await apiClient.get<Habit[]>('/habits');
@@ -15,6 +15,8 @@ export interface CreateHabitInput {
   timeOfDay?: string;
   xpReward?: number;
   skillIds?: string[];
+  skillRewardOverrides?: SkillRewardOverride[];
+  attributeBonuses?: Array<{ attributeId: string; amount: number }>;
 }
 
 export async function createHabit(input: CreateHabitInput) {

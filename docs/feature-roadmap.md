@@ -368,7 +368,7 @@ Phase 1+ feature.
 | 0.2 — XP Source Metadata | **Done.** `XPTransaction.sourceName`, captured at write time. See `gameplay-systems.md` § "The centralised XP ledger". |
 | Ledger invariant tests (pulled forward from its Sprint 1 position) | **Done.** `common/leveling.spec.ts`, `xp/xp.service.spec.ts` - the project's first tests. |
 | 5 — XP History | **Done.** `GET /analytics/xp-history` + `/analytics/history` page. Graph/daily-weekly-monthly breakdowns from the roadmap's "should eventually support" list are not built - the existing `/analytics` XP-over-time chart already covers that need. |
-| 0.3 — XP Bundles | Not yet built. |
+| 0.3 — XP Bundles | **Done.** Per-skill XP overrides (`QuestSkill`/`HabitSkill`/`GoalSkill.amount`) and attribute-only bonus XP (`ActivityAttributeBonus`), wired into all three creation modals via a shared `RewardBundleEditor`. See `gameplay-systems.md` § "XP Bundles: per-skill overrides and attribute-only bonuses". |
 | 0.1 — Internal domain events | Not yet built. |
 | Everything in Phases 1-4 | Not yet built - out of scope for Sprint 1. |
 
@@ -379,3 +379,15 @@ rows - see `gameplay-systems.md` § "`sourceName` and `eventId`" for why. `targe
 themselves were deliberately *not* adopted as a generic polymorphic pair - the existing
 `skillId`/`attributeId` typed nullable foreign keys already do that job with real FK constraints
 and cascading deletes, which a generic `targetId: string` column would give up.
+
+**Deliberate deviation:** Feature 0.3 was implemented as a targeted extension of the existing
+skill-tagging model rather than the roadmap's fully generic `XPBundle { rewards: [{type, id,
+amount}] }` list. Concretely: a per-skill override (`skillAwards[].amount`) only applies to a
+skill already tagged via `skillIds` (no free-standing `{type: "SKILL", ...}` reward disconnected
+from the tag), and an attribute-only bonus (`attributeBonuses`) is its own field rather than a
+`{type: "ATTRIBUTE", ...}` reward variant. This keeps the existing `skillIds: string[]` API
+surface and `QuestSkill`/`HabitSkill`/`GoalSkill` join tables as the single source of truth for
+"what does this activity affect," with the bundle fields only ever refining amounts on top of
+that - rather than introducing a second, parallel way to declare what a skill/attribute is
+tagged, which the generic list shape would have allowed (e.g. a reward targeting a skill the
+activity isn't otherwise tagged with).

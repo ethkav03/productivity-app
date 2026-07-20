@@ -23,9 +23,15 @@ export class XpService {
   constructor(private readonly prisma: PrismaService) {}
 
   async awardXp(params: AwardXpParams): Promise<XpAwardResult> {
-    const { userId, amount, sourceType, sourceId, sourceName, skillIds = [], note } = params;
+    const { userId, amount, sourceType, sourceId, sourceName, skillAwards = [], attributeBonuses = [], note } = params;
     if (amount <= 0) {
       throw new BadRequestException('XP amount must be positive');
+    }
+    if (skillAwards.some((award) => award.amount !== undefined && award.amount <= 0)) {
+      throw new BadRequestException('Skill XP override amounts must be positive');
+    }
+    if (attributeBonuses.some((bonus) => bonus.amount <= 0)) {
+      throw new BadRequestException('Attribute bonus amounts must be positive');
     }
     const eventId = randomUUID();
 
@@ -52,16 +58,32 @@ export class XpService {
 
       const skills: SkillXpResult[] = [];
       const attributes: AttributeXpResult[] = [];
-      const uniqueSkillIds = Array.from(new Set(skillIds));
 
-      for (const skillId of uniqueSkillIds) {
+      // Dedupe by skillId - if the same skill somehow appears twice, the
+      // first occurrence's amount (override or not) wins, matching the
+      // pre-XP-Bundles dedupe behavior for plain skillIds.
+      const seenSkillIds = new Set<string>();
+      const uniqueSkillAwards = skillAwards.filter((award) => {
+        if (seenSkillIds.has(award.skillId)) return false;
+        seenSkillIds.add(award.skillId);
+        return true;
+      });
+
+      for (const skillAward of uniqueSkillAwards) {
+        const skillId = skillAward.skillId;
+        // "XP Bundles": a skill can override the character-level amount
+        // (e.g. a gym session gives the character +100 but only +150 to a
+        // specifically-emphasized skill) - undefined just inherits `amount`,
+        // the pre-Bundles default.
+        const skillAmount = skillAward.amount ?? amount;
+
         await tx.xPTransaction.create({
-          data: { userId, skillId, amount, sourceType, sourceId, sourceName, eventId, note },
+          data: { userId, skillId, amount: skillAmount, sourceType, sourceId, sourceName, eventId, note },
         });
 
         const skill = await tx.skill.findUniqueOrThrow({ where: { id: skillId } });
         const previousSkillState = calculateLevelState(skill.totalXP);
-        const newSkillTotalXp = skill.totalXP + amount;
+        const newSkillTotalXp = skill.totalXP + skillAmount;
         const newSkillState = calculateLevelState(newSkillTotalXp);
 
         await tx.skill.update({
@@ -76,16 +98,17 @@ export class XpService {
           leveledUp: newSkillState.level > previousSkillState.level,
         });
 
-        // Every skill's XP also flows up to the attribute it belongs to.
-        // Deliberately not deduplicated across skills sharing an attribute -
-        // same rationale as skills each getting the full XP amount.
+        // Every skill's XP also flows up to the attribute it belongs to,
+        // using that skill's own (possibly overridden) amount. Deliberately
+        // not deduplicated across skills sharing an attribute - same
+        // rationale as skills each getting their own full amount.
         await tx.xPTransaction.create({
-          data: { userId, attributeId: skill.attributeId, amount, sourceType, sourceId, sourceName, eventId, note },
+          data: { userId, attributeId: skill.attributeId, amount: skillAmount, sourceType, sourceId, sourceName, eventId, note },
         });
 
         const attribute = await tx.attribute.findUniqueOrThrow({ where: { id: skill.attributeId } });
         const previousAttributeState = calculateLevelState(attribute.totalXP);
-        const newAttributeTotalXp = attribute.totalXP + amount;
+        const newAttributeTotalXp = attribute.totalXP + skillAmount;
         const newAttributeState = calculateLevelState(newAttributeTotalXp);
 
         await tx.attribute.update({
@@ -95,6 +118,47 @@ export class XpService {
 
         attributes.push({
           attributeId: skill.attributeId,
+          previousLevel: previousAttributeState.level,
+          newLevel: newAttributeState.level,
+          leveledUp: newAttributeState.level > previousAttributeState.level,
+        });
+      }
+
+      // "XP Bundles": bonus XP to an attribute with no tagged skill at all
+      // (e.g. a workout quest also crediting Discipline for showing up).
+      const seenAttributeIds = new Set<string>();
+      const uniqueAttributeBonuses = attributeBonuses.filter((bonus) => {
+        if (seenAttributeIds.has(bonus.attributeId)) return false;
+        seenAttributeIds.add(bonus.attributeId);
+        return true;
+      });
+
+      for (const bonus of uniqueAttributeBonuses) {
+        await tx.xPTransaction.create({
+          data: {
+            userId,
+            attributeId: bonus.attributeId,
+            amount: bonus.amount,
+            sourceType,
+            sourceId,
+            sourceName,
+            eventId,
+            note,
+          },
+        });
+
+        const attribute = await tx.attribute.findUniqueOrThrow({ where: { id: bonus.attributeId } });
+        const previousAttributeState = calculateLevelState(attribute.totalXP);
+        const newAttributeTotalXp = attribute.totalXP + bonus.amount;
+        const newAttributeState = calculateLevelState(newAttributeTotalXp);
+
+        await tx.attribute.update({
+          where: { id: bonus.attributeId },
+          data: { totalXP: newAttributeTotalXp, level: newAttributeState.level },
+        });
+
+        attributes.push({
+          attributeId: bonus.attributeId,
           previousLevel: previousAttributeState.level,
           newLevel: newAttributeState.level,
           leveledUp: newAttributeState.level > previousAttributeState.level,

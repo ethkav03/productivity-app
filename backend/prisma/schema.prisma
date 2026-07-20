@@ -182,13 +182,43 @@ model Attribute {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  skills         Skill[]
-  xpTransactions XPTransaction[]
+  user            User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skills          Skill[]
+  xpTransactions  XPTransaction[]
+  activityBonuses ActivityAttributeBonus[]
 
   @@unique([userId, key])
   @@index([userId])
   @@map("attributes")
+}
+
+/// Bonus XP a quest/habit/goal awards directly to an attribute on completion,
+/// independent of any tagged skill - e.g. a workout quest giving some
+/// Discipline credit for showing up, on top of whatever Strength/Physical it
+/// awards via tagged skills (see QuestSkill.amount and friends). Exactly one
+/// of questId/habitId/goalId is set, matching whichever activity owns this
+/// bonus line. Part of "XP Bundles" - see docs/gameplay-systems.md.
+model ActivityAttributeBonus {
+  id          String  @id @default(uuid())
+  questId     String?
+  habitId     String?
+  goalId      String?
+  attributeId String
+  amount      Int
+
+  quest     Quest?    @relation(fields: [questId], references: [id], onDelete: Cascade)
+  habit     Habit?    @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  goal      Goal?     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  attribute Attribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+
+  @@unique([questId, attributeId])
+  @@unique([habitId, attributeId])
+  @@unique([goalId, attributeId])
+  @@index([questId])
+  @@index([habitId])
+  @@index([goalId])
+  @@index([attributeId])
+  @@map("activity_attribute_bonuses")
 }
 
 model Skill {
@@ -244,9 +274,10 @@ model Goal {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  quests     Quest[]
-  goalSkills GoalSkill[]
+  user             User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  quests           Quest[]
+  goalSkills       GoalSkill[]
+  attributeBonuses ActivityAttributeBonus[]
 
   @@index([userId])
   @@map("goals")
@@ -256,6 +287,10 @@ model GoalSkill {
   id      String @id @default(uuid())
   goalId  String
   skillId String
+  /// Overrides the goal's flat xpReward for this specific skill (and its
+  /// attribute cascade) on completion. Null means "use the goal's xpReward",
+  /// matching behavior before XP Bundles (see ActivityAttributeBonus) existed.
+  amount  Int?
 
   goal  Goal  @relation(fields: [goalId], references: [id], onDelete: Cascade)
   skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
@@ -283,9 +318,10 @@ model Quest {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  goal        Goal?        @relation(fields: [goalId], references: [id], onDelete: SetNull)
-  questSkills QuestSkill[]
+  user             User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal             Goal?                    @relation(fields: [goalId], references: [id], onDelete: SetNull)
+  questSkills      QuestSkill[]
+  attributeBonuses ActivityAttributeBonus[]
 
   @@index([userId])
   @@index([goalId])
@@ -296,6 +332,10 @@ model QuestSkill {
   id      String @id @default(uuid())
   questId String
   skillId String
+  /// Overrides the quest's flat xpReward for this specific skill (and its
+  /// attribute cascade) on completion. Null means "use the quest's xpReward",
+  /// matching behavior before XP Bundles (see ActivityAttributeBonus) existed.
+  amount  Int?
 
   quest Quest @relation(fields: [questId], references: [id], onDelete: Cascade)
   skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
@@ -323,9 +363,10 @@ model Habit {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  habitSkills HabitSkill[]
-  completions HabitCompletion[]
+  user             User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  habitSkills      HabitSkill[]
+  completions      HabitCompletion[]
+  attributeBonuses ActivityAttributeBonus[]
 
   @@index([userId])
   @@map("habits")
@@ -335,6 +376,10 @@ model HabitSkill {
   id      String @id @default(uuid())
   habitId String
   skillId String
+  /// Overrides the habit's flat xpReward for this specific skill (and its
+  /// attribute cascade) on completion. Null means "use the habit's xpReward",
+  /// matching behavior before XP Bundles (see ActivityAttributeBonus) existed.
+  amount  Int?
 
   habit Habit @relation(fields: [habitId], references: [id], onDelete: Cascade)
   skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)

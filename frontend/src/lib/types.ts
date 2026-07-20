@@ -92,6 +92,19 @@ export interface DefaultAttributeGroup {
   skills: DefaultSkillDefinition[];
 }
 
+/** "XP Bundles": overrides a quest/habit/goal's flat xpReward for one specific tagged skill. */
+export interface SkillRewardOverride {
+  skillId: string;
+  amount: number;
+}
+
+/** "XP Bundles": bonus XP awarded directly to an attribute, independent of any tagged skill. */
+export interface ActivityAttributeBonus {
+  attributeId: string;
+  attributeName: string;
+  amount: number;
+}
+
 export type GoalType = 'NUMERIC' | 'COMPLETION' | 'BINARY';
 export type GoalStatus = 'ACTIVE' | 'COMPLETED' | 'ABANDONED';
 
@@ -113,6 +126,8 @@ export interface Goal {
   createdAt: string;
   updatedAt: string;
   skills: Skill[];
+  skillRewardOverrides: SkillRewardOverride[];
+  attributeBonuses: ActivityAttributeBonus[];
   quests?: Quest[];
   progressPercent: number;
 }
@@ -137,6 +152,8 @@ export interface Quest {
   createdAt: string;
   updatedAt: string;
   skills: Skill[];
+  skillRewardOverrides: SkillRewardOverride[];
+  attributeBonuses: ActivityAttributeBonus[];
   goal?: Pick<Goal, 'id' | 'title'> | null;
   completedToday?: boolean;
 }
@@ -159,6 +176,8 @@ export interface Habit {
   createdAt: string;
   updatedAt: string;
   skills: Skill[];
+  skillRewardOverrides: SkillRewardOverride[];
+  attributeBonuses: ActivityAttributeBonus[];
   completedToday: boolean;
 }
 

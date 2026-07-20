@@ -50,9 +50,9 @@ for exact prop shapes, read the referenced files directly.
 | `/dashboard` | `frontend/app/(app)/dashboard/page.tsx` | Home screen: streak + level/XP header, an 8-axis "Character Shape" radar chart of attribute levels, today's habits, active quests, active goals, recent achievements, activity feed. |
 | `/skills` | `frontend/app/(app)/skills/page.tsx` | Skills grouped by the 8 fixed attributes, with progress bars; add-skill modal (suggested or custom) and delete. |
 | `/skills/[id]` | `frontend/app/(app)/skills/[id]/page.tsx` | Single skill detail: rename/edit description, cumulative XP growth chart, recent XP transaction list, delete. |
-| `/quests` | `frontend/app/(app)/quests/page.tsx` | Active/Completed quest tabs, create-quest modal, complete action. |
-| `/habits` | `frontend/app/(app)/habits/page.tsx` | Today's habits with streak counters, create-habit modal, complete/pause/reactivate/delete. |
-| `/goals` | `frontend/app/(app)/goals/page.tsx` | Active/Completed goal tabs, create-goal modal. |
+| `/quests` | `frontend/app/(app)/quests/page.tsx` | Active/Completed quest tabs, create-quest modal (incl. a `RewardBundleEditor` "Advanced rewards" disclosure for per-skill XP overrides + attribute-only bonuses), complete action. |
+| `/habits` | `frontend/app/(app)/habits/page.tsx` | Today's habits with streak counters, create-habit modal (incl. `RewardBundleEditor`), complete/pause/reactivate/delete. |
+| `/goals` | `frontend/app/(app)/goals/page.tsx` | Active/Completed goal tabs, create-goal modal (incl. `RewardBundleEditor`). |
 | `/goals/[id]` | `frontend/app/(app)/goals/[id]/page.tsx` | Single goal detail: linked quests, log-progress form (binary mark-complete or numeric value entry), delete. |
 | `/achievements` | `frontend/app/(app)/achievements/page.tsx` | All achievement definitions split into Unlocked / Locked sections, with a per-type requirement description. |
 | `/leaderboard` | `frontend/app/(app)/leaderboard/page.tsx` | Ranks the caller against their accepted friends: metric tabs (Overall Level / Attribute / XP Earned). Attribute mode filters via a `role="radiogroup"` of icon-only circles per attribute (categorical color, matching `AttributeDots`/Skills page), the selected one expanding into an icon+name pill; XP mode filters via a period pill row. Below that: a top-3 podium (graceful with fewer than 3 entries), a 4th-onward ranked list, and a "Manage Friends" modal (send/accept/decline/remove, plus a "Suggested Friends" section) with an unread-incoming-request badge. |

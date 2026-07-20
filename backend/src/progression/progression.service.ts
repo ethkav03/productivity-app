@@ -30,7 +30,8 @@ export class ProgressionService {
       sourceType: params.sourceType,
       sourceId: params.sourceId,
       sourceName: params.sourceName,
-      skillIds: params.skillIds,
+      skillAwards: params.skillAwards,
+      attributeBonuses: params.attributeBonuses,
       note: params.note,
     });
 

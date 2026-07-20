@@ -4,6 +4,48 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-20 — XP Bundles
+
+Second slice of "Sprint 1: Progression Foundation" (`docs/feature-roadmap.md`) - Feature 0.3.
+Lets a quest/habit/goal award a different XP amount to a specific tagged skill than its flat
+`xpReward`, and/or bonus XP to an attribute with no tagged skill at all.
+
+Schema (migration `20260720160000_xp_bundles`): `QuestSkill`/`HabitSkill`/`GoalSkill` each gained
+a nullable `amount` (null = inherit the flat `xpReward`, i.e. unchanged pre-Bundle behavior); new
+`ActivityAttributeBonus` model, polymorphic over exactly one of `questId`/`habitId`/`goalId`, for
+attribute-only bonus XP.
+
+`XpService.awardXp`'s `skillIds?: string[]` param was replaced with `skillAwards?: SkillAward[]`
+(`{ skillId, amount? }`) plus a new `attributeBonuses?: AttributeBonus[]` (`{ attributeId,
+amount }`) - additive, not breaking: an award with no per-skill `amount` behaves exactly like the
+old `skillIds` did. Both lists are deduped by key and validated (`amount` must be a positive
+integer) inside `awardXp` itself. `QuestsService`/`HabitsService`/`GoalsService` each gained a
+`validateRewardBundle` check (an override's `skillId` must be one of the activity's own tagged
+`skillIds`; a bonus's `attributeId` must be owned by the caller, via new
+`AttributesService.assertOwnedAttributeIds`) and now pass `skillAwards`/`attributeBonuses` through
+to `ProgressionService.completeActivity` → `XpService.awardXp` at completion time.
+
+New shared frontend component `RewardBundleEditor`
+(`frontend/src/components/ui/reward-bundle-editor.tsx`): a collapsed-by-default "Advanced
+rewards" disclosure showing a number input per currently-tagged skill (placeholder = the flat
+reward, so "inherit" is visually obvious) and an add/remove list for attribute bonuses. Wired
+into all three creation modals (`/quests`, `/habits`, `/goals`) — each computes its own
+`taggedSkills` from the form's live `skillIds` and passes its own flat reward (difficulty-derived
+XP for quests, `xpReward` for habits, a fixed 500 for goals, matching each type's existing
+default).
+
+Backend verified end-to-end via a real API script (override + bonus persistence, xp-history
+grouping, validation errors, habit/goal smoke tests) and a Playwright browser script covering the
+full create-quest-with-a-bundle flow in both light and dark themes. The browser script's login
+step initially failed with the submitted email/password showing up as URL query params - a
+hydration race, not a real bug (the identical login flow had worked reliably many times earlier
+in the same session) - fixed with an explicit `waitForLoadState('networkidle')`. A second failure
+was a real, if minor, product gap: `RewardBundleEditor`'s icon-only "add bonus" button had no
+accessible name, so Playwright's `getByRole('button', { name: '' })` (an empty string matches
+*any* accessible name as a substring) resolved to an unrelated button and submitted the form
+early; fixed by giving the button a proper `aria-label="Add attribute bonus"`, a small real
+accessibility improvement alongside the test fix.
+
 ## 2026-07-20 — XP source metadata, ledger tests, and XP History
 
 First slice of the feature roadmap's "Sprint 1: Progression Foundation"

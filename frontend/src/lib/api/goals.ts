@@ -1,5 +1,5 @@
 import { apiClient } from '../api-client';
-import { CompletionResult, Goal, GoalType } from '../types';
+import { CompletionResult, Goal, GoalType, SkillRewardOverride } from '../types';
 
 export interface GoalFilters {
   status?: 'ACTIVE' | 'COMPLETED' | 'ABANDONED';
@@ -25,6 +25,8 @@ export interface CreateGoalInput {
   targetDate?: string;
   xpReward?: number;
   skillIds?: string[];
+  skillRewardOverrides?: SkillRewardOverride[];
+  attributeBonuses?: Array<{ attributeId: string; amount: number }>;
 }
 
 export async function createGoal(input: CreateGoalInput) {

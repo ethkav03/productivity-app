@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import { GoalType } from '@prisma/client';
 import {
   IsArray,
@@ -12,7 +13,9 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { AttributeBonusDto, SkillRewardOverrideDto } from '../../common/dto/activity-reward.dto';
 
 export class CreateGoalDto {
   @ApiProperty()
@@ -66,4 +69,24 @@ export class CreateGoalDto {
   @IsArray()
   @IsUUID('4', { each: true })
   skillIds?: string[];
+
+  @ApiPropertyOptional({
+    type: [SkillRewardOverrideDto],
+    description: '"XP Bundle": per-skill XP override. Every skillId here must also appear in skillIds.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SkillRewardOverrideDto)
+  skillRewardOverrides?: SkillRewardOverrideDto[];
+
+  @ApiPropertyOptional({
+    type: [AttributeBonusDto],
+    description: '"XP Bundle": bonus XP awarded directly to an attribute, independent of any tagged skill.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AttributeBonusDto)
+  attributeBonuses?: AttributeBonusDto[];
 }

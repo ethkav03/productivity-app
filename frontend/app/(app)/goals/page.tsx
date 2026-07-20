@@ -11,6 +11,7 @@ import clsx from 'clsx';
 import { format } from 'date-fns';
 import { createGoal, getGoals, CreateGoalInput } from '@/lib/api/goals';
 import { getSkills } from '@/lib/api/skills';
+import { getAttributes } from '@/lib/api/attributes';
 import { Goal, GoalStatus, GoalType } from '@/lib/types';
 import { getApiErrorMessage } from '@/lib/api-client';
 import { AttributeDots } from '@/components/ui/attribute-dots';
@@ -20,9 +21,13 @@ import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { FieldError, Input, Label, Select, Textarea } from '@/components/ui/input';
 import { PillSelect } from '@/components/ui/pill-select';
+import { RewardBundleEditor, RewardBundleValue } from '@/components/ui/reward-bundle-editor';
 import { ProgressBar } from '@/components/ui/progress-bar';
 import { EmptyState } from '@/components/ui/empty-state';
 import { PageSpinner } from '@/components/ui/spinner';
+
+const DEFAULT_GOAL_XP_REWARD = 500;
+const EMPTY_REWARD_BUNDLE: RewardBundleValue = { skillRewardOverrides: [], attributeBonuses: [] };
 
 const GOAL_TYPE_LABELS: Record<GoalType, string> = {
   NUMERIC: 'Numeric',
@@ -97,6 +102,9 @@ export default function GoalsPage() {
   });
 
   const { data: skills } = useQuery({ queryKey: ['skills'], queryFn: getSkills });
+  const { data: attributes } = useQuery({ queryKey: ['attributes'], queryFn: getAttributes, enabled: modalOpen });
+
+  const [rewardBundle, setRewardBundle] = useState<RewardBundleValue>(EMPTY_REWARD_BUNDLE);
 
   const {
     register,
@@ -112,16 +120,20 @@ export default function GoalsPage() {
 
   const type = watch('type');
   const skillIds = watch('skillIds') ?? [];
+  const taggedSkills = (skills ?? []).filter((skill) => skillIds.includes(skill.id)).map((skill) => ({ id: skill.id, name: skill.name }));
 
   function closeModal() {
     setModalOpen(false);
     setFormError(null);
     reset(DEFAULT_FORM_VALUES);
+    setRewardBundle(EMPTY_REWARD_BUNDLE);
   }
 
   async function onSubmit(values: CreateGoalFormValues) {
     setFormError(null);
     try {
+      const skillRewardOverrides = rewardBundle.skillRewardOverrides.filter((o) => (values.skillIds ?? []).includes(o.skillId));
+
       const input: CreateGoalInput = {
         title: values.title,
         description: values.description?.trim() ? values.description.trim() : undefined,
@@ -129,6 +141,8 @@ export default function GoalsPage() {
         type: values.type,
         targetDate: values.targetDate?.trim() ? values.targetDate : undefined,
         skillIds: values.skillIds,
+        skillRewardOverrides: skillRewardOverrides.length ? skillRewardOverrides : undefined,
+        attributeBonuses: rewardBundle.attributeBonuses.length ? rewardBundle.attributeBonuses : undefined,
       };
       if (values.type !== 'BINARY') {
         input.targetValue = Number(values.targetValue);
@@ -136,6 +150,7 @@ export default function GoalsPage() {
       }
       await createGoal(input);
       queryClient.invalidateQueries({ queryKey: ['goals'] });
+      setRewardBundle(EMPTY_REWARD_BUNDLE);
       closeModal();
     } catch (error) {
       setFormError(getApiErrorMessage(error, 'Could not create goal'));
@@ -300,6 +315,14 @@ export default function GoalsPage() {
               />
             </div>
           )}
+
+          <RewardBundleEditor
+            taggedSkills={taggedSkills}
+            attributes={attributes ?? []}
+            flatXpReward={DEFAULT_GOAL_XP_REWARD}
+            value={rewardBundle}
+            onChange={setRewardBundle}
+          />
 
           {formError && <p className="text-sm text-danger">{formError}</p>}
         </form>

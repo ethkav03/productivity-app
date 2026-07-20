@@ -92,9 +92,9 @@ listed in any other module's `imports` array.
 | `ProgressionModule` | `XpModule`, `AchievementsModule`, `NotificationsModule` |
 | `AchievementsModule` | `NotificationsModule` |
 | `NotificationsModule` | *(none)* |
-| `QuestsModule` | `ProgressionModule`, `SkillsModule` |
-| `HabitsModule` | `ProgressionModule`, `SkillsModule` |
-| `GoalsModule` | `ProgressionModule`, `SkillsModule`, `AchievementsModule` |
+| `QuestsModule` | `ProgressionModule`, `SkillsModule`, `AttributesModule` |
+| `HabitsModule` | `ProgressionModule`, `SkillsModule`, `AttributesModule` |
+| `GoalsModule` | `ProgressionModule`, `SkillsModule`, `AchievementsModule`, `AttributesModule` |
 | `AnalyticsModule` | *(none)* |
 | `FriendsModule` | *(none)* |
 | `LeaderboardModule` | `FriendsModule` |
@@ -120,14 +120,17 @@ AppModule
 ├── NotificationsModule
 ├── QuestsModule
 │   ├── ProgressionModule (see above)
-│   └── SkillsModule
+│   ├── SkillsModule
+│   └── AttributesModule (see above)
 ├── HabitsModule
 │   ├── ProgressionModule (see above)
-│   └── SkillsModule
+│   ├── SkillsModule
+│   └── AttributesModule (see above)
 ├── GoalsModule
 │   ├── ProgressionModule (see above)
 │   ├── SkillsModule
-│   └── AchievementsModule (see above)
+│   ├── AchievementsModule (see above)
+│   └── AttributesModule (see above)
 ├── AnalyticsModule
 ├── FriendsModule
 ├── LeaderboardModule
@@ -232,8 +235,13 @@ all 8 automatically; they are not user-created or deletable.
     with level state and nested skills.
   - `findOne(userId, id)` — one attribute's detail: level state, `weeklyXP` (last 7 days),
     `recentActivity` (last 20 `XPTransaction` rows), nested skills.
+  - `assertOwnedAttributeIds(userId, attributeIds)` — throws `NotFoundException` unless every id
+    in the list is owned by the user; used by Quests/Habits/Goals to validate "XP Bundles"
+    attribute-bonus targets before linking them (mirrors `SkillsService.assertOwnedSkillIds`).
   - *(private)* `getOwnedAttribute(userId, id)` — fetch-or-404, then 403 if not owned.
-- **Depended on by:** `AuthModule` (calls `ensureDefaultAttributes` during registration).
+- **Depended on by:** `AuthModule` (calls `ensureDefaultAttributes` during registration),
+  `QuestsModule`, `HabitsModule`, `GoalsModule` (all call `assertOwnedAttributeIds` when
+  creating/updating attribute bonuses).
 
 #### Attribute ordering
 
@@ -285,12 +293,17 @@ The centralized XP ledger. No controller — it is a pure backend service consum
   - `awardXp(params)` — the single place that ever writes to `totalXP`/`level` on `User`,
     `Skill`, or `Attribute`. Generates one `eventId` (`crypto.randomUUID()`) per call and stamps
     it on every row the call writes. Inside one `$transaction`: creates an immutable
-    `XPTransaction` row for the character (skillId/attributeId both null), then one for each
-    associated skill and that skill's attribute, recomputing level state
-    (`calculateLevelState`) for the character, each skill, and each attribute in turn. Also
+    `XPTransaction` row for the character (skillId/attributeId both null); then, for each entry
+    in `skillAwards` (`{ skillId, amount? }`, deduped by `skillId`), one row for that skill and
+    one for its owning attribute, using `amount ?? params.amount` — i.e. a skill without its own
+    `amount` inherits the character-level amount, exactly reproducing pre-"XP Bundles" behavior;
+    then, for each entry in `attributeBonuses` (`{ attributeId, amount }`, deduped by
+    `attributeId`), one row crediting that attribute directly (no skill, no effect on the
+    character row). Recomputes level state (`calculateLevelState`) for every row it writes. Also
     accepts an optional `sourceName` (the caller's activity title, e.g. a quest's title),
     written onto every row from the call so its label survives the source being renamed or
-    deleted later. Throws `BadRequestException` if `amount <= 0`.
+    deleted later. Throws `BadRequestException` if `amount <= 0`, or if any `skillAwards[].amount`
+    or `attributeBonuses[].amount` is present and not a positive integer.
   - `getRecentActivity(userId, limit = 20)` — most recent `XPTransaction` rows for a user,
     including a minimal `skill` relation.
   - `applyCorrection(params)` — a direct, out-of-band ledger correction: the only place `amount`
@@ -311,7 +324,9 @@ workflow only exists in one place.
 
 - **Imports:** `XpModule`, `AchievementsModule`, `NotificationsModule`.
 - **Exports:** `ProgressionService`.
-  - `completeActivity(params)` — calls `XpService.awardXp`, then (unless
+  - `completeActivity(params)` — forwards `params.skillAwards`/`params.attributeBonuses`
+    straight through to `XpService.awardXp` (it has no opinion on "XP Bundles" — that's decided
+    upstream by the calling Quest/Habit/Goal service), then (unless
     `params.updateCharacterStreak === false`) updates the character's streak, creates a
     `LEVEL_UP` notification if the character leveled up, then calls
     `AchievementsService.checkAndUnlock`, and returns a combined `CompletionResult`
@@ -372,25 +387,32 @@ that and call `create`.
 CRUD + completion for one-time and recurring quests, optionally linked to a `Goal` and to one
 or more skills (`QuestSkill` join rows).
 
-- **Imports:** `ProgressionModule`, `SkillsModule`.
+- **Imports:** `ProgressionModule`, `SkillsModule`, `AttributesModule`.
 - **Controller:** `QuestsController` — `GET /api/quests` (filterable by `status`/`goalId`),
   `POST /api/quests`, `GET /api/quests/:id`, `PATCH /api/quests/:id`,
   `POST /api/quests/:id/complete`, `DELETE /api/quests/:id` — all guarded.
 - **Exports:** `QuestsService`.
   - `findAll(userId, filters)` / `findOne(userId, id)` — list/detail, serialized with a
     `completedToday` flag (recurring quests: last completion was today; one-time: `status ===
-    'COMPLETED'`).
+    'COMPLETED'`), plus `skillRewardOverrides` (from `QuestSkill.amount`) and `attributeBonuses`
+    ("XP Bundles" — see `docs/gameplay-systems.md`).
   - `create(userId, dto)` — validates owned goal (if linked) and owned skills, defaults
     `difficulty: MEDIUM`, `type: ONE_TIME`, and `xpReward` from `DIFFICULTY_XP[difficulty]` if
-    not given, creates the quest and its `QuestSkill` rows.
+    not given, creates the quest and its `QuestSkill` rows (each carrying its
+    `skillRewardOverrides` entry, if any, as `amount`) and `ActivityAttributeBonus` rows.
   - `update(userId, id, dto)` — validates ownership/linked goal/skills, replaces skill links if
-    `skillIds` provided, updates scalar fields.
+    `skillIds` provided, updates scalar fields; replaces `skillRewardOverrides` and
+    `attributeBonuses` wholesale when either is provided.
   - `remove(userId, id)` — validates ownership, deletes.
   - `complete(userId, id)` — blocks archived quests and (for recurring quests) same-day
     re-completion, or (for one-time quests) re-completion at all; updates the quest's
     completion state, then calls `ProgressionService.completeActivity` with
-    `sourceType: 'QUEST_COMPLETION'`.
-  - *(private)* `assertOwnedGoal`, `getOwnedQuest`.
+    `sourceType: 'QUEST_COMPLETION'`, `skillAwards` derived from the quest's `questSkills`
+    (`{ skillId, amount: qs.amount ?? undefined }`), and `attributeBonuses` from the quest's
+    `ActivityAttributeBonus` rows.
+  - *(private)* `assertOwnedGoal`, `getOwnedQuest`, `validateRewardBundle` (checks every
+    `skillRewardOverrides[].skillId` is in the request's `skillIds`, and delegates to
+    `AttributesService.assertOwnedAttributeIds` for `attributeBonuses`).
 - **Depended on by:** nothing (only `AppModule`).
 
 ### `HabitsModule` (`backend/src/habits/`)
@@ -398,24 +420,28 @@ or more skills (`QuestSkill` join rows).
 CRUD + completion for recurring habits, gated to once per calendar day via the
 `HabitCompletion` unique constraint on `[habitId, periodKey]`.
 
-- **Imports:** `ProgressionModule`, `SkillsModule`.
+- **Imports:** `ProgressionModule`, `SkillsModule`, `AttributesModule`.
 - **Controller:** `HabitsController` — `GET /api/habits`, `POST /api/habits`,
   `PATCH /api/habits/:id`, `DELETE /api/habits/:id`, `POST /api/habits/:id/complete` — all
   guarded. (No `GET /api/habits/:id` detail route — only list + mutate.)
 - **Exports:** `HabitsService`.
   - `findAll(userId)` — all habits, each annotated with `completedToday` (looked up from
-    today's `HabitCompletion` rows in one batch query).
+    today's `HabitCompletion` rows in one batch query), plus `skillRewardOverrides` and
+    `attributeBonuses` ("XP Bundles" — see `docs/gameplay-systems.md`).
   - `create(userId, dto)` — validates owned skills, defaults `frequency: DAILY`,
-    `xpReward: 10`, creates the habit and its `HabitSkill` rows.
+    `xpReward: 10`, creates the habit and its `HabitSkill` rows (each carrying its
+    `skillRewardOverrides` entry, if any, as `amount`) and `ActivityAttributeBonus` rows.
   - `update(userId, id, dto)` — validates ownership/skills, replaces skill links if provided,
-    updates scalar fields, re-derives `completedToday`.
+    updates scalar fields, re-derives `completedToday`; replaces `skillRewardOverrides` and
+    `attributeBonuses` wholesale when either is provided.
   - `remove(userId, id)` — validates ownership, deletes.
   - `complete(userId, id)` — requires `isActive`; attempts to create today's `HabitCompletion`
     row, converting a unique-constraint violation (Prisma error `P2002`) into a
     `ConflictException` ("already completed for this period"); on success, recomputes the
     habit's own streak (`nextStreakValue`) and calls `ProgressionService.completeActivity` with
-    `sourceType: 'HABIT_COMPLETION'`.
-  - *(private)* `getOwnedHabit`.
+    `sourceType: 'HABIT_COMPLETION'`, `skillAwards` derived from the habit's `habitSkills`, and
+    `attributeBonuses` from the habit's `ActivityAttributeBonus` rows.
+  - *(private)* `getOwnedHabit`, `validateRewardBundle` (same shape as `QuestsService`'s).
 - **Depended on by:** nothing (only `AppModule`).
 
 ### `GoalsModule` (`backend/src/goals/`)
@@ -426,25 +452,32 @@ quests) — and can optionally require linked skills.
 
 - **Imports:** `ProgressionModule`, `SkillsModule`, `AchievementsModule` (the one activity
   module that imports `AchievementsModule` directly, in addition to reaching it indirectly
-  through `ProgressionModule`).
+  through `ProgressionModule`), `AttributesModule`.
 - **Controller:** `GoalsController` — `GET /api/goals` (filterable by `status`),
   `POST /api/goals`, `GET /api/goals/:id`, `PATCH /api/goals/:id`, `POST /api/goals/:id/progress`,
   `DELETE /api/goals/:id` — all guarded.
 - **Exports:** `GoalsService`.
-  - `findAll(userId, filters)` — list with computed `progressPercent` per goal.
+  - `findAll(userId, filters)` — list with computed `progressPercent` per goal, plus
+    `skillRewardOverrides` and `attributeBonuses` ("XP Bundles" — see
+    `docs/gameplay-systems.md`).
   - `findOne(userId, id)` — detail, adds linked `quests`.
   - `create(userId, dto)` — validates owned skills, requires `targetValue` for `NUMERIC`/
-    `COMPLETION` types, defaults `type: BINARY`, `xpReward: 500`; after creating, calls
-    `AchievementsService.checkAndUnlock` directly (goal-creation achievements have no XP event
-    to piggyback on, so they can't go through `ProgressionService`).
+    `COMPLETION` types, defaults `type: BINARY`, `xpReward: 500`; creates the goal's `GoalSkill`
+    rows (each carrying its `skillRewardOverrides` entry, if any, as `amount`) and
+    `ActivityAttributeBonus` rows; after creating, calls `AchievementsService.checkAndUnlock`
+    directly (goal-creation achievements have no XP event to piggyback on, so they can't go
+    through `ProgressionService`).
   - `update(userId, id, dto)` — validates ownership/skills, replaces skill links if provided,
-    updates scalar fields.
+    updates scalar fields; replaces `skillRewardOverrides` and `attributeBonuses` wholesale when
+    either is provided.
   - `remove(userId, id)` — validates ownership, deletes.
   - `progress(userId, id, dto)` — requires an `ACTIVE` goal; for `BINARY` goals any `value >= 1`
     completes it, for others `currentValue` is set directly and completion is
     `currentValue >= targetValue`; on completion, calls `ProgressionService.completeActivity`
-    with `sourceType: 'GOAL_COMPLETION'` and returns `{ goal, completion }` (otherwise just
-    `{ goal }`).
+    with `sourceType: 'GOAL_COMPLETION'`, `skillAwards` derived from the goal's `goalSkills`, and
+    `attributeBonuses` from the goal's `ActivityAttributeBonus` rows, returning
+    `{ goal, completion }` (otherwise just `{ goal }`).
+  - *(private)* `validateRewardBundle` (same shape as `QuestsService`'s).
   - *(private)* `serialize`, `getOwnedGoal`.
 - **Depended on by:** nothing (only `AppModule`).
 

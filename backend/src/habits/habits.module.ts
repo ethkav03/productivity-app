@@ -3,9 +3,10 @@ import { HabitsService } from './habits.service';
 import { HabitsController } from './habits.controller';
 import { ProgressionModule } from '../progression/progression.module';
 import { SkillsModule } from '../skills/skills.module';
+import { AttributesModule } from '../attributes/attributes.module';
 
 @Module({
-  imports: [ProgressionModule, SkillsModule],
+  imports: [ProgressionModule, SkillsModule, AttributesModule],
   controllers: [HabitsController],
   providers: [HabitsService],
   exports: [HabitsService],

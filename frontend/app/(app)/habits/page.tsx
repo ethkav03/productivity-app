@@ -23,7 +23,11 @@ import { useCelebration } from '@/hooks/use-celebration';
 import { getApiErrorMessage } from '@/lib/api-client';
 import { CreateHabitInput, completeHabit, createHabit, deleteHabit, getHabits, updateHabit } from '@/lib/api/habits';
 import { getSkills } from '@/lib/api/skills';
+import { getAttributes } from '@/lib/api/attributes';
 import { Habit, HabitFrequency } from '@/lib/types';
+import { RewardBundleEditor, RewardBundleValue } from '@/components/ui/reward-bundle-editor';
+
+const EMPTY_REWARD_BUNDLE: RewardBundleValue = { skillRewardOverrides: [], attributeBonuses: [] };
 
 const DAY_OPTIONS = [
   { value: '0', label: 'Sun' },
@@ -88,6 +92,9 @@ export default function HabitsPage() {
 
   const habitsQuery = useQuery({ queryKey: ['habits'], queryFn: getHabits });
   const skillsQuery = useQuery({ queryKey: ['skills'], queryFn: getSkills });
+  const attributesQuery = useQuery({ queryKey: ['attributes'], queryFn: getAttributes, enabled: isModalOpen });
+
+  const [rewardBundle, setRewardBundle] = useState<RewardBundleValue>(EMPTY_REWARD_BUNDLE);
 
   const {
     register,
@@ -102,14 +109,18 @@ export default function HabitsPage() {
   });
 
   const frequency = watch('frequency');
+  const watchedXpReward = watch('xpReward');
+  const watchedSkillIds = watch('skillIds');
 
   function closeModal() {
     setIsModalOpen(false);
     reset(DEFAULT_FORM_VALUES);
+    setRewardBundle(EMPTY_REWARD_BUNDLE);
   }
 
   function openCreateModal() {
     reset(DEFAULT_FORM_VALUES);
+    setRewardBundle(EMPTY_REWARD_BUNDLE);
     setIsModalOpen(true);
   }
 
@@ -151,6 +162,7 @@ export default function HabitsPage() {
     mutationFn: createHabit,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['habits'] });
+      setRewardBundle(EMPTY_REWARD_BUNDLE);
       closeModal();
     },
     onError: (error) => {
@@ -159,11 +171,15 @@ export default function HabitsPage() {
   });
 
   function onSubmit(values: HabitFormValues) {
+    const skillRewardOverrides = rewardBundle.skillRewardOverrides.filter((o) => values.skillIds.includes(o.skillId));
+
     const input: CreateHabitInput = {
       title: values.title.trim(),
       frequency: values.frequency,
       xpReward: values.xpReward,
       skillIds: values.skillIds,
+      skillRewardOverrides: skillRewardOverrides.length ? skillRewardOverrides : undefined,
+      attributeBonuses: rewardBundle.attributeBonuses.length ? rewardBundle.attributeBonuses : undefined,
     };
     const description = values.description?.trim();
     if (description) input.description = description;
@@ -192,6 +208,9 @@ export default function HabitsPage() {
   const completedTodayCount = activeHabits.filter((h) => h.completedToday).length;
   const progressPercent = activeHabits.length > 0 ? (completedTodayCount / activeHabits.length) * 100 : 0;
   const skillOptions = (skillsQuery.data ?? []).map((skill) => ({ value: skill.id, label: skill.name }));
+  const taggedSkills = (skillsQuery.data ?? [])
+    .filter((skill) => watchedSkillIds.includes(skill.id))
+    .map((skill) => ({ id: skill.id, name: skill.name }));
 
   return (
     <div className="space-y-6">
@@ -378,6 +397,14 @@ export default function HabitsPage() {
               <p className="text-xs text-muted">No skills yet — you can link this habit to a skill later.</p>
             )}
           </div>
+
+          <RewardBundleEditor
+            taggedSkills={taggedSkills}
+            attributes={attributesQuery.data ?? []}
+            flatXpReward={watchedXpReward || 10}
+            value={rewardBundle}
+            onChange={setRewardBundle}
+          />
         </form>
       </Modal>
     </div>

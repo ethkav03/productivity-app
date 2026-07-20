@@ -9,21 +9,30 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProgressionService } from '../progression/progression.service';
 import { SkillsService } from '../skills/skills.service';
+import { AttributesService } from '../attributes/attributes.service';
 import { getDayKey, nextStreakValue } from '../common/period';
 import { CreateHabitDto } from './dto/create-habit.dto';
 import { UpdateHabitDto } from './dto/update-habit.dto';
+import { AttributeBonusDto, SkillRewardOverrideDto } from '../common/dto/activity-reward.dto';
 
 const habitInclude = {
   habitSkills: { include: { skill: { include: { attribute: true } } } },
+  attributeBonuses: { include: { attribute: { select: { id: true, key: true, name: true } } } },
 } satisfies Prisma.HabitInclude;
 
 type HabitWithSkills = Prisma.HabitGetPayload<{ include: typeof habitInclude }>;
 
 function serializeHabit(habit: HabitWithSkills, completedToday: boolean) {
-  const { habitSkills, ...rest } = habit;
+  const { habitSkills, attributeBonuses, ...rest } = habit;
   return {
     ...rest,
     skills: habitSkills.map((hs) => hs.skill),
+    skillRewardOverrides: habitSkills.filter((hs) => hs.amount != null).map((hs) => ({ skillId: hs.skillId, amount: hs.amount as number })),
+    attributeBonuses: attributeBonuses.map((bonus) => ({
+      attributeId: bonus.attributeId,
+      attributeName: bonus.attribute.name,
+      amount: bonus.amount,
+    })),
     completedToday,
   };
 }
@@ -34,7 +43,27 @@ export class HabitsService {
     private readonly prisma: PrismaService,
     private readonly progressionService: ProgressionService,
     private readonly skillsService: SkillsService,
+    private readonly attributesService: AttributesService,
   ) {}
+
+  /** See QuestsService.validateRewardBundle - identical rules, duplicated per module rather than shared across a DI boundary. */
+  private async validateRewardBundle(
+    userId: string,
+    skillIds: string[] | undefined,
+    skillRewardOverrides: SkillRewardOverrideDto[] | undefined,
+    attributeBonuses: AttributeBonusDto[] | undefined,
+  ): Promise<void> {
+    if (skillRewardOverrides?.length) {
+      const taggedSkillIds = new Set(skillIds ?? []);
+      const untagged = skillRewardOverrides.find((override) => !taggedSkillIds.has(override.skillId));
+      if (untagged) {
+        throw new BadRequestException(`Skill ${untagged.skillId} has a reward override but isn't tagged in skillIds`);
+      }
+    }
+    if (attributeBonuses?.length) {
+      await this.attributesService.assertOwnedAttributeIds(userId, attributeBonuses.map((bonus) => bonus.attributeId));
+    }
+  }
 
   async findAll(userId: string) {
     const habits = await this.prisma.habit.findMany({
@@ -57,9 +86,11 @@ export class HabitsService {
     if (dto.skillIds?.length) {
       await this.skillsService.assertOwnedSkillIds(userId, dto.skillIds);
     }
+    await this.validateRewardBundle(userId, dto.skillIds, dto.skillRewardOverrides, dto.attributeBonuses);
 
     const frequency = dto.frequency ?? 'DAILY';
     const xpReward = dto.xpReward ?? 10;
+    const overrideBySkillId = new Map((dto.skillRewardOverrides ?? []).map((o) => [o.skillId, o.amount]));
 
     const habit = await this.prisma.habit.create({
       data: {
@@ -72,7 +103,10 @@ export class HabitsService {
         timeOfDay: dto.timeOfDay,
         xpReward,
         habitSkills: {
-          create: (dto.skillIds ?? []).map((skillId) => ({ skillId })),
+          create: (dto.skillIds ?? []).map((skillId) => ({ skillId, amount: overrideBySkillId.get(skillId) })),
+        },
+        attributeBonuses: {
+          create: (dto.attributeBonuses ?? []).map((bonus) => ({ attributeId: bonus.attributeId, amount: bonus.amount })),
         },
       },
       include: habitInclude,
@@ -86,15 +120,41 @@ export class HabitsService {
 
     if (dto.skillIds) {
       await this.skillsService.assertOwnedSkillIds(userId, dto.skillIds);
+    }
+    if (dto.skillRewardOverrides || dto.attributeBonuses) {
+      const currentSkillIds = dto.skillIds ?? (await this.prisma.habitSkill.findMany({ where: { habitId: id }, select: { skillId: true } })).map((hs) => hs.skillId);
+      await this.validateRewardBundle(userId, currentSkillIds, dto.skillRewardOverrides, dto.attributeBonuses);
+    }
+
+    if (dto.skillIds) {
+      const overrideBySkillId = new Map((dto.skillRewardOverrides ?? []).map((o) => [o.skillId, o.amount]));
       await this.prisma.$transaction([
         this.prisma.habitSkill.deleteMany({ where: { habitId: id } }),
         this.prisma.habitSkill.createMany({
-          data: dto.skillIds.map((skillId) => ({ habitId: id, skillId })),
+          data: dto.skillIds.map((skillId) => ({ habitId: id, skillId, amount: overrideBySkillId.get(skillId) })),
+        }),
+      ]);
+    } else if (dto.skillRewardOverrides) {
+      await this.prisma.$transaction(
+        dto.skillRewardOverrides.map((override) =>
+          this.prisma.habitSkill.updateMany({
+            where: { habitId: id, skillId: override.skillId },
+            data: { amount: override.amount },
+          }),
+        ),
+      );
+    }
+
+    if (dto.attributeBonuses) {
+      await this.prisma.$transaction([
+        this.prisma.activityAttributeBonus.deleteMany({ where: { habitId: id } }),
+        this.prisma.activityAttributeBonus.createMany({
+          data: dto.attributeBonuses.map((bonus) => ({ habitId: id, attributeId: bonus.attributeId, amount: bonus.amount })),
         }),
       ]);
     }
 
-    const { skillIds, ...scalarFields } = dto;
+    const { skillIds, skillRewardOverrides, attributeBonuses, ...scalarFields } = dto;
 
     const habit = await this.prisma.habit.update({
       where: { id },
@@ -118,7 +178,7 @@ export class HabitsService {
   async complete(userId: string, id: string) {
     const habit = await this.prisma.habit.findUnique({
       where: { id },
-      include: { habitSkills: true },
+      include: { habitSkills: true, attributeBonuses: true },
     });
     if (!habit) throw new NotFoundException('Habit not found');
     if (habit.userId !== userId) throw new ForbiddenException();
@@ -156,7 +216,8 @@ export class HabitsService {
       sourceType: 'HABIT_COMPLETION',
       sourceId: habit.id,
       sourceName: habit.title,
-      skillIds: habit.habitSkills.map((hs) => hs.skillId),
+      skillAwards: habit.habitSkills.map((hs) => ({ skillId: hs.skillId, amount: hs.amount ?? undefined })),
+      attributeBonuses: habit.attributeBonuses.map((bonus) => ({ attributeId: bonus.attributeId, amount: bonus.amount })),
     });
   }
 

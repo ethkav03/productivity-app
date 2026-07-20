@@ -4,12 +4,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ProgressionService } from '../progression/progression.service';
 import { SkillsService } from '../skills/skills.service';
 import { AchievementsService } from '../achievements/achievements.service';
+import { AttributesService } from '../attributes/attributes.service';
 import { CreateGoalDto } from './dto/create-goal.dto';
 import { UpdateGoalDto } from './dto/update-goal.dto';
 import { ProgressGoalDto } from './dto/progress-goal.dto';
+import { AttributeBonusDto, SkillRewardOverrideDto } from '../common/dto/activity-reward.dto';
 
 const goalInclude = {
   goalSkills: { include: { skill: { include: { attribute: true } } } },
+  attributeBonuses: { include: { attribute: { select: { id: true, key: true, name: true } } } },
 } satisfies Prisma.GoalInclude;
 
 type GoalWithSkills = Prisma.GoalGetPayload<{ include: typeof goalInclude }>;
@@ -21,7 +24,27 @@ export class GoalsService {
     private readonly progressionService: ProgressionService,
     private readonly skillsService: SkillsService,
     private readonly achievementsService: AchievementsService,
+    private readonly attributesService: AttributesService,
   ) {}
+
+  /** See QuestsService.validateRewardBundle - identical rules, duplicated per module rather than shared across a DI boundary. */
+  private async validateRewardBundle(
+    userId: string,
+    skillIds: string[] | undefined,
+    skillRewardOverrides: SkillRewardOverrideDto[] | undefined,
+    attributeBonuses: AttributeBonusDto[] | undefined,
+  ): Promise<void> {
+    if (skillRewardOverrides?.length) {
+      const taggedSkillIds = new Set(skillIds ?? []);
+      const untagged = skillRewardOverrides.find((override) => !taggedSkillIds.has(override.skillId));
+      if (untagged) {
+        throw new BadRequestException(`Skill ${untagged.skillId} has a reward override but isn't tagged in skillIds`);
+      }
+    }
+    if (attributeBonuses?.length) {
+      await this.attributesService.assertOwnedAttributeIds(userId, attributeBonuses.map((bonus) => bonus.attributeId));
+    }
+  }
 
   private async serialize(goal: GoalWithSkills) {
     let linkedCompletedQuestCount = 0;
@@ -41,10 +64,16 @@ export class GoalsService {
       progressPercent = Math.min(100, Math.max(0, (numerator / goal.targetValue) * 100));
     }
 
-    const { goalSkills, ...rest } = goal;
+    const { goalSkills, attributeBonuses, ...rest } = goal;
     return {
       ...rest,
       skills: goalSkills.map((goalSkill) => goalSkill.skill),
+      skillRewardOverrides: goalSkills.filter((gs) => gs.amount != null).map((gs) => ({ skillId: gs.skillId, amount: gs.amount as number })),
+      attributeBonuses: attributeBonuses.map((bonus) => ({
+        attributeId: bonus.attributeId,
+        attributeName: bonus.attribute.name,
+        amount: bonus.amount,
+      })),
       progressPercent,
     };
   }
@@ -78,6 +107,7 @@ export class GoalsService {
     if (dto.skillIds?.length) {
       await this.skillsService.assertOwnedSkillIds(userId, dto.skillIds);
     }
+    await this.validateRewardBundle(userId, dto.skillIds, dto.skillRewardOverrides, dto.attributeBonuses);
 
     const type = dto.type ?? 'BINARY';
     if ((type === 'NUMERIC' || type === 'COMPLETION') && (dto.targetValue === undefined || dto.targetValue === null)) {
@@ -85,6 +115,7 @@ export class GoalsService {
     }
 
     const xpReward = dto.xpReward ?? 500;
+    const overrideBySkillId = new Map((dto.skillRewardOverrides ?? []).map((o) => [o.skillId, o.amount]));
 
     const goal = await this.prisma.goal.create({
       data: {
@@ -98,7 +129,10 @@ export class GoalsService {
         targetDate: dto.targetDate ? new Date(dto.targetDate) : undefined,
         xpReward,
         goalSkills: {
-          create: (dto.skillIds ?? []).map((skillId) => ({ skillId })),
+          create: (dto.skillIds ?? []).map((skillId) => ({ skillId, amount: overrideBySkillId.get(skillId) })),
+        },
+        attributeBonuses: {
+          create: (dto.attributeBonuses ?? []).map((bonus) => ({ attributeId: bonus.attributeId, amount: bonus.amount })),
         },
       },
       include: goalInclude,
@@ -117,10 +151,36 @@ export class GoalsService {
 
     if (dto.skillIds) {
       await this.skillsService.assertOwnedSkillIds(userId, dto.skillIds);
+    }
+    if (dto.skillRewardOverrides || dto.attributeBonuses) {
+      const currentSkillIds = dto.skillIds ?? (await this.prisma.goalSkill.findMany({ where: { goalId: id }, select: { skillId: true } })).map((gs) => gs.skillId);
+      await this.validateRewardBundle(userId, currentSkillIds, dto.skillRewardOverrides, dto.attributeBonuses);
+    }
+
+    if (dto.skillIds) {
+      const overrideBySkillId = new Map((dto.skillRewardOverrides ?? []).map((o) => [o.skillId, o.amount]));
       await this.prisma.$transaction([
         this.prisma.goalSkill.deleteMany({ where: { goalId: id } }),
         this.prisma.goalSkill.createMany({
-          data: dto.skillIds.map((skillId) => ({ goalId: id, skillId })),
+          data: dto.skillIds.map((skillId) => ({ goalId: id, skillId, amount: overrideBySkillId.get(skillId) })),
+        }),
+      ]);
+    } else if (dto.skillRewardOverrides) {
+      await this.prisma.$transaction(
+        dto.skillRewardOverrides.map((override) =>
+          this.prisma.goalSkill.updateMany({
+            where: { goalId: id, skillId: override.skillId },
+            data: { amount: override.amount },
+          }),
+        ),
+      );
+    }
+
+    if (dto.attributeBonuses) {
+      await this.prisma.$transaction([
+        this.prisma.activityAttributeBonus.deleteMany({ where: { goalId: id } }),
+        this.prisma.activityAttributeBonus.createMany({
+          data: dto.attributeBonuses.map((bonus) => ({ goalId: id, attributeId: bonus.attributeId, amount: bonus.amount })),
         }),
       ]);
     }
@@ -152,7 +212,7 @@ export class GoalsService {
   async progress(userId: string, id: string, dto: ProgressGoalDto) {
     const goal = await this.prisma.goal.findUnique({
       where: { id },
-      include: { goalSkills: true },
+      include: { goalSkills: true, attributeBonuses: true },
     });
     if (!goal) throw new NotFoundException('Goal not found');
     if (goal.userId !== userId) throw new ForbiddenException();
@@ -185,7 +245,8 @@ export class GoalsService {
         sourceType: 'GOAL_COMPLETION',
         sourceId: goal.id,
         sourceName: goal.title,
-        skillIds: goal.goalSkills.map((goalSkill) => goalSkill.skillId),
+        skillAwards: goal.goalSkills.map((goalSkill) => ({ skillId: goalSkill.skillId, amount: goalSkill.amount ?? undefined })),
+        attributeBonuses: goal.attributeBonuses.map((bonus) => ({ attributeId: bonus.attributeId, amount: bonus.amount })),
       });
       return { goal: await this.serialize(updated), completion };
     }

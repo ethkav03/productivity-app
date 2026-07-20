@@ -8,7 +8,7 @@ every model, enum, and constraint currently in that schema.
 
 ## Migration history
 
-Six migrations exist as of this writing:
+Seven migrations exist as of this writing:
 
 | Migration folder | What it added |
 | --- | --- |
@@ -18,6 +18,7 @@ Six migrations exist as of this writing:
 | `20260720120000_admin_users` | Adds `User.isAdmin` (`Boolean @default(false)`). Backs the admin dashboard - see `docs/backend.md` § `AdminModule`. |
 | `20260720140000_xp_source_name` | Adds `XPTransaction.sourceName` (nullable) - the source entity's display name, captured at write time. Existing rows were backfilled from the current quest/habit/goal title where resolvable (best-effort; rows whose source has since been deleted stay `null`). |
 | `20260720145000_xp_event_id` | Adds `XPTransaction.eventId` (nullable) - correlates every row written by one `XpService.awardXp`/`applyCorrection` call. Not backfilled for pre-existing rows (see the field's own doc comment for why `createdAt` isn't a safe substitute). |
+| `20260720160000_xp_bundles` | Adds `amount Int?` to `QuestSkill`, `HabitSkill`, and `GoalSkill` (a per-skill XP override, null meaning "inherit the activity's flat `xpReward`"); introduces the `ActivityAttributeBonus` model (bonus XP paid directly into an attribute, with no tagged skill, for a `Quest`/`Habit`/`Goal`). Backs "XP Bundles" - see the model reference below and `docs/gameplay-systems.md`. |
 
 `migration_lock.toml` pins the schema to the `postgresql` provider (Prisma refuses to mix
 providers across migrations once this file exists).
@@ -29,10 +30,11 @@ product-level description this implementation is derived from.
 
 ```
 User ──┬── Attribute (8 fixed, auto-created at registration)
-       │      └── Skill (belongs to exactly one Attribute)
-       │             ├── GoalSkill  ──── Goal
-       │             ├── QuestSkill ──── Quest ──── (optional) Goal
-       │             └── HabitSkill ──── Habit ──── HabitCompletion
+       │      ├── Skill (belongs to exactly one Attribute)
+       │      │      ├── GoalSkill  ──── Goal
+       │      │      ├── QuestSkill ──── Quest ──── (optional) Goal
+       │      │      └── HabitSkill ──── Habit ──── HabitCompletion
+       │      └── ActivityAttributeBonus ──── one of Goal / Quest / Habit
        ├── Goal, Quest, Habit, HabitCompletion  (also owned directly by User)
        ├── XPTransaction (references User, and optionally Skill and/or Attribute)
        ├── UserAchievement ──── Achievement (global, not per-user)
@@ -44,8 +46,11 @@ In words: every `User` owns 8 `Attribute` rows (one per `AttributeKey`), created
 at registration. Every `Skill` belongs to exactly one `Attribute` and to one `User`. `Goal`,
 `Quest`, and `Habit` are the three activity types a user creates directly; each can be tagged
 with zero or more `Skill`s through a dedicated join table (`GoalSkill`, `QuestSkill`,
-`HabitSkill`). A `Quest` can optionally belong to a `Goal`. A `Habit`'s individual check-ins are
-recorded as `HabitCompletion` rows. Every XP grant anywhere in the app is recorded as an
+`HabitSkill`), and each join-table row may carry its own `amount` overriding that activity's
+flat `xpReward` for that one skill ("XP Bundles" - see `docs/gameplay-systems.md`). Each
+`Goal`/`Quest`/`Habit` can also have zero or more `ActivityAttributeBonus` rows, paying bonus XP
+directly into an attribute with no tagged skill involved. A `Quest` can optionally belong to a
+`Goal`. A `Habit`'s individual check-ins are recorded as `HabitCompletion` rows. Every XP grant anywhere in the app is recorded as an
 `XPTransaction`, which can reference a `User` alone (character-level XP), or also a `Skill`
 and/or that skill's `Attribute` (the XP cascade). `Achievement` definitions are global (not
 per-user) and unlocked per user via `UserAchievement`. `Notification` is a simple per-user
@@ -110,7 +115,8 @@ earns in any skill that belongs to it (see `XpService.awardXp`).
 | `updatedAt` | `DateTime` | `@updatedAt` | |
 
 **Relations:** `user` (FK `userId → User.id`, `onDelete: Cascade`), `skills[]` (one attribute
-has many skills), `xpTransactions[]` (XP transactions that mirrored into this attribute).
+has many skills), `xpTransactions[]` (XP transactions that mirrored into this attribute),
+`activityBonuses[]` (`ActivityAttributeBonus[]` targeting this attribute).
 
 **Constraints:**
 - `@@unique([userId, key])` — a user can have at most one `Attribute` row per fixed key (i.e.
@@ -164,6 +170,7 @@ Join table tagging a `Goal` with one or more `Skill`s.
 | `id` | `String` (uuid) | `@default(uuid())`, PK | |
 | `goalId` | `String` | required | FK to `Goal`. |
 | `skillId` | `String` | required | FK to `Skill`. |
+| `amount` | `Int?` | nullable | Overrides the goal's flat `xpReward` for this specific skill when set ("XP Bundles"). Null means "use the `xpReward`", matching behavior before XP Bundles existed. |
 
 **Relations:** `goal` (`onDelete: Cascade`), `skill` (`onDelete: Cascade`).
 
@@ -197,7 +204,8 @@ by completion, or as a binary done/not-done.
 | `updatedAt` | `DateTime` | `@updatedAt` | |
 
 **Relations:** `user` (`onDelete: Cascade`), `quests[]` (quests that reference this goal),
-`goalSkills[]` (tagged skills via `GoalSkill`).
+`goalSkills[]` (tagged skills via `GoalSkill`), `attributeBonuses[]`
+(`ActivityAttributeBonus[]`).
 
 **Constraints:** `@@index([userId])`. Maps to table `goals`.
 
@@ -212,6 +220,7 @@ Join table tagging a `Quest` with one or more `Skill`s.
 | `id` | `String` (uuid) | `@default(uuid())`, PK | |
 | `questId` | `String` | required | FK to `Quest`. |
 | `skillId` | `String` | required | FK to `Skill`. |
+| `amount` | `Int?` | nullable | Overrides the quest's flat `xpReward` for this specific skill when set ("XP Bundles"). Null means "use the `xpReward`", matching behavior before XP Bundles existed. |
 
 **Relations:** `quest` (`onDelete: Cascade`), `skill` (`onDelete: Cascade`).
 
@@ -242,7 +251,8 @@ A single unit of work a user completes; can optionally roll up into a `Goal`.
 | `updatedAt` | `DateTime` | `@updatedAt` | |
 
 **Relations:** `user` (`onDelete: Cascade`), `goal` (`onDelete: SetNull` — deleting a goal
-un-links its quests rather than deleting them), `questSkills[]`.
+un-links its quests rather than deleting them), `questSkills[]`, `attributeBonuses[]`
+(`ActivityAttributeBonus[]`).
 
 **Constraints:** `@@index([userId])`, `@@index([goalId])`. Maps to table `quests`.
 
@@ -257,6 +267,7 @@ Join table tagging a `Habit` with one or more `Skill`s.
 | `id` | `String` (uuid) | `@default(uuid())`, PK | |
 | `habitId` | `String` | required | FK to `Habit`. |
 | `skillId` | `String` | required | FK to `Skill`. |
+| `amount` | `Int?` | nullable | Overrides the habit's flat `xpReward` for this specific skill when set ("XP Bundles"). Null means "use the `xpReward`", matching behavior before XP Bundles existed. |
 
 **Relations:** `habit` (`onDelete: Cascade`), `skill` (`onDelete: Cascade`).
 
@@ -288,7 +299,7 @@ character-level streak.
 | `updatedAt` | `DateTime` | `@updatedAt` | |
 
 **Relations:** `user` (`onDelete: Cascade`), `habitSkills[]`, `completions[]`
-(`HabitCompletion[]`).
+(`HabitCompletion[]`), `attributeBonuses[]` (`ActivityAttributeBonus[]`).
 
 **Constraints:** `@@index([userId])`. Maps to table `habits`.
 
@@ -362,6 +373,38 @@ exact regardless of timing.
 **Constraints:** `@@index([userId])`, `@@index([skillId])`, `@@index([attributeId])`,
 `@@index([userId, createdAt])` (supports chronological/paginated ledger queries per user, e.g.
 analytics and activity feeds), `@@index([eventId])`. Maps to table `xp_transactions`.
+
+---
+
+### ActivityAttributeBonus
+
+Part of "XP Bundles": bonus XP an activity pays directly into an attribute, with no tagged
+skill involved. Polymorphic over exactly one of `questId`/`habitId`/`goalId` — a given row
+belongs to exactly one activity.
+
+| Field | Type | Default / Nullable | Notes |
+| --- | --- | --- | --- |
+| `id` | `String` (uuid) | `@default(uuid())`, PK | |
+| `questId` | `String?` | nullable | FK to `Quest`. Exactly one of `questId`/`habitId`/`goalId` is set per row. |
+| `habitId` | `String?` | nullable | FK to `Habit`. |
+| `goalId` | `String?` | nullable | FK to `Goal`. |
+| `attributeId` | `String` | required | FK to `Attribute` — the bonus target. |
+| `amount` | `Int` | required | Bonus XP amount, in addition to whatever the activity's tagged skills earn. |
+
+**Relations:** `quest` (optional, `onDelete: Cascade`), `habit` (optional, `onDelete: Cascade`),
+`goal` (optional, `onDelete: Cascade`), `attribute` (`onDelete: Cascade`).
+
+**Constraints:**
+- `@@unique([questId, attributeId])`, `@@unique([habitId, attributeId])`,
+  `@@unique([goalId, attributeId])` — an activity can only have one bonus row per attribute (the
+  service layer dedupes by `attributeId` before writing, so this is a backstop, not the primary
+  guard).
+- `@@index([questId])`, `@@index([habitId])`, `@@index([goalId])`, `@@index([attributeId])`
+
+At completion time, `XpService.awardXp` turns each row into its own `XPTransaction`
+(`skillId: null`, `attributeId` set to the bonus's target) — it updates that attribute only, with
+no character-level or skill-level row, since the bonus is attribute-scoped by design. See
+`docs/gameplay-systems.md` for the full mechanics. Maps to table `activity_attribute_bonuses`.
 
 ---
 

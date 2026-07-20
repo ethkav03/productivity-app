@@ -13,6 +13,7 @@ import { getApiErrorMessage } from '@/lib/api-client';
 import { completeQuest, createQuest, getQuests } from '@/lib/api/quests';
 import { getGoals } from '@/lib/api/goals';
 import { getSkills } from '@/lib/api/skills';
+import { getAttributes } from '@/lib/api/attributes';
 import { Quest, QuestDifficulty, QuestType } from '@/lib/types';
 import { AttributeDots } from '@/components/ui/attribute-dots';
 import { Badge } from '@/components/ui/badge';
@@ -22,8 +23,11 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { FieldError, Input, Label, Select, Textarea } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { PillSelect } from '@/components/ui/pill-select';
+import { RewardBundleEditor, RewardBundleValue } from '@/components/ui/reward-bundle-editor';
 import { PageSpinner, Spinner } from '@/components/ui/spinner';
 import { useToast } from '@/components/ui/toaster';
+
+const EMPTY_REWARD_BUNDLE: RewardBundleValue = { skillRewardOverrides: [], attributeBonuses: [] };
 
 type QuestStatusTab = 'ACTIVE' | 'COMPLETED';
 
@@ -246,6 +250,14 @@ function CreateQuestModal({ open, onClose }: { open: boolean; onClose: () => voi
     enabled: open,
   });
 
+  const attributesQuery = useQuery({
+    queryKey: ['attributes'],
+    queryFn: getAttributes,
+    enabled: open,
+  });
+
+  const [rewardBundle, setRewardBundle] = useState<RewardBundleValue>(EMPTY_REWARD_BUNDLE);
+
   const {
     register,
     handleSubmit,
@@ -267,12 +279,15 @@ function CreateQuestModal({ open, onClose }: { open: boolean; onClose: () => voi
   });
 
   const watchedType = watch('type');
+  const watchedDifficulty = watch('difficulty');
+  const watchedSkillIds = watch('skillIds');
 
   const createMutation = useMutation({
     mutationFn: createQuest,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['quests'] });
       reset();
+      setRewardBundle(EMPTY_REWARD_BUNDLE);
       onClose();
     },
     onError: (error) => {
@@ -285,12 +300,21 @@ function CreateQuestModal({ open, onClose }: { open: boolean; onClose: () => voi
     [skillsQuery.data],
   );
 
+  const taggedSkills = useMemo(
+    () => (skillsQuery.data ?? []).filter((skill) => watchedSkillIds.includes(skill.id)).map((skill) => ({ id: skill.id, name: skill.name })),
+    [skillsQuery.data, watchedSkillIds],
+  );
+
   function handleClose() {
     reset();
+    setRewardBundle(EMPTY_REWARD_BUNDLE);
     onClose();
   }
 
   function onSubmit(values: CreateQuestFormValues) {
+    // Safety net: drop any override for a skill that got un-tagged after the override was set.
+    const skillRewardOverrides = rewardBundle.skillRewardOverrides.filter((o) => values.skillIds.includes(o.skillId));
+
     createMutation.mutate({
       title: values.title,
       description: values.description || undefined,
@@ -298,6 +322,8 @@ function CreateQuestModal({ open, onClose }: { open: boolean; onClose: () => voi
       difficulty: values.difficulty,
       goalId: values.goalId ? values.goalId : undefined,
       skillIds: values.skillIds,
+      skillRewardOverrides: skillRewardOverrides.length ? skillRewardOverrides : undefined,
+      attributeBonuses: rewardBundle.attributeBonuses.length ? rewardBundle.attributeBonuses : undefined,
       deadline: values.type === 'DEADLINE' && values.deadline ? new Date(values.deadline).toISOString() : undefined,
     });
   }
@@ -377,6 +403,14 @@ function CreateQuestModal({ open, onClose }: { open: boolean; onClose: () => voi
             />
           )}
         </div>
+
+        <RewardBundleEditor
+          taggedSkills={taggedSkills}
+          attributes={attributesQuery.data ?? []}
+          flatXpReward={DIFFICULTY_XP[watchedDifficulty]}
+          value={rewardBundle}
+          onChange={setRewardBundle}
+        />
 
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="secondary" onClick={handleClose}>

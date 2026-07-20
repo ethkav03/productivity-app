@@ -1,5 +1,16 @@
 import { XPSourceType } from '@prisma/client';
 
+export interface SkillAward {
+  skillId: string;
+  /** Overrides the character-level `amount` for this skill (and its attribute cascade). Omitted means "use `amount`" - the pre-XP-Bundles default. */
+  amount?: number;
+}
+
+export interface AttributeBonus {
+  attributeId: string;
+  amount: number;
+}
+
 export interface AwardXpParams {
   userId: string;
   amount: number;
@@ -7,8 +18,10 @@ export interface AwardXpParams {
   sourceId?: string;
   /** The source entity's display name (e.g. a quest's title), captured now so it survives the source being renamed/deleted later. */
   sourceName?: string;
-  /** Skills that should receive the same XP amount as the character (e.g. a quest's associated skills). */
-  skillIds?: string[];
+  /** Skills that should receive XP (e.g. a quest's associated skills), each optionally overriding `amount` for an "XP Bundle" - see AttributeBonus for the attribute-only equivalent. */
+  skillAwards?: SkillAward[];
+  /** Bonus XP awarded directly to an attribute, independent of any tagged skill - e.g. a workout quest also crediting Discipline for showing up. */
+  attributeBonuses?: AttributeBonus[];
   note?: string;
 }
 

@@ -1,5 +1,5 @@
 import { apiClient } from '../api-client';
-import { CompletionResult, Quest, QuestDifficulty, QuestType } from '../types';
+import { CompletionResult, Quest, QuestDifficulty, QuestType, SkillRewardOverride } from '../types';
 
 export interface QuestFilters {
   status?: 'ACTIVE' | 'COMPLETED' | 'ARCHIVED';
@@ -24,6 +24,8 @@ export interface CreateQuestInput {
   xpReward?: number;
   goalId?: string;
   skillIds?: string[];
+  skillRewardOverrides?: SkillRewardOverride[];
+  attributeBonuses?: Array<{ attributeId: string; amount: number }>;
   deadline?: string;
 }
 

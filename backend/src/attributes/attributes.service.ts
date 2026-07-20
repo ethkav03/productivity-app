@@ -86,6 +86,15 @@ export class AttributesService {
     };
   }
 
+  /** Used internally by other modules (quests/habits/goals) to validate XP Bundle attribute-bonus targets. */
+  async assertOwnedAttributeIds(userId: string, attributeIds: string[]): Promise<void> {
+    if (attributeIds.length === 0) return;
+    const count = await this.prisma.attribute.count({ where: { id: { in: attributeIds }, userId } });
+    if (count !== new Set(attributeIds).size) {
+      throw new NotFoundException('One or more bonus attributes were not found');
+    }
+  }
+
   private async getOwnedAttribute(userId: string, id: string) {
     const attribute = await this.prisma.attribute.findUnique({ where: { id } });
     if (!attribute) throw new NotFoundException('Attribute not found');

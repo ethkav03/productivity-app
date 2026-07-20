@@ -120,35 +120,42 @@ interface AwardXpParams {
   amount: number;
   sourceType: XPSourceType;      // QUEST_COMPLETION | HABIT_COMPLETION | GOAL_COMPLETION | ACHIEVEMENT_BONUS | CORRECTION
   sourceId?: string;
-  skillIds?: string[];           // skills tagged on the completed activity
+  sourceName?: string;
+  skillAwards?: SkillAward[];              // { skillId, amount? } - skills tagged on the completed activity
+  attributeBonuses?: AttributeBonus[];     // { attributeId, amount } - "XP Bundles", see below
   note?: string;
 }
 
 interface XpAwardResult {
   xpGained: number;
   character: LevelChangeResult;               // { previousLevel, newLevel, leveledUp }
-  skills: SkillXpResult[];                     // one per skillId, each extends LevelChangeResult with skillId
-  attributes: AttributeXpResult[];             // one per skillId (not deduplicated), each extends LevelChangeResult with attributeId
+  skills: SkillXpResult[];                     // one per skillAward, each extends LevelChangeResult with skillId
+  attributes: AttributeXpResult[];             // one per skillAward (not deduplicated) plus one per attributeBonus, each extends LevelChangeResult with attributeId
 }
 ```
+
+(`skillIds?: string[]` was the original shape before "XP Bundles" — `skillAwards` is a strictly
+additive replacement: an entry with no `amount` behaves exactly like the old `skillIds` did.)
 
 ### What one call to `awardXp` writes
 
 Everything happens inside a single `prisma.$transaction`. For a call with `amount = X` and
-`skillIds = [s1, s2]` where `s1` and `s2` both belong to attribute `A`:
+`skillAwards = [{ skillId: s1 }, { skillId: s2 }]` where `s1` and `s2` both belong to attribute
+`A` (no per-skill override, no attribute bonuses — the pre-"XP Bundles" case):
 
 1. **One character-level `XPTransaction`** with `skillId: null` and `attributeId: null`, `amount: X`.
    `User.totalXP` is incremented by `X` and `User.level` recalculated via `calculateLevelState`.
-2. **One `XPTransaction` per skill in `skillIds`**, each with `amount: X` (the *full* amount, not
-   `X` split across skills). Each skill's `totalXP`/`level` is updated the same way.
+2. **One `XPTransaction` per entry in `skillAwards`**, each with `amount: X` (the *full* amount,
+   not `X` split across skills) — since neither entry set its own `amount`, each inherits the
+   call's top-level `amount`. Each skill's `totalXP`/`level` is updated the same way.
 3. **One `XPTransaction` per skill's attribute**, again each with the *full* `amount: X`. Because
    this loops per-skill rather than per-unique-attribute, if two tagged skills share an attribute
    (as in the example above), that attribute receives `X` **twice** in the same call - two
    separate `XPTransaction` rows, each `amount: X`.
 
-So for the example above, one `awardXp({ amount: X, skillIds: [s1, s2] })` call writes 4 rows
-total: 1 character row + 2 skill rows + 2 attribute rows (both crediting attribute `A`), and `A`'s
-`totalXP` increases by `2 * X`, not `X`.
+So for the example above, one `awardXp({ amount: X, skillAwards: [{skillId: s1}, {skillId: s2}] })`
+call writes 4 rows total: 1 character row + 2 skill rows + 2 attribute rows (both crediting
+attribute `A`), and `A`'s `totalXP` increases by `2 * X`, not `X`.
 
 **This is deliberate, not a bug.** The code comment in `xp.service.ts` says so directly:
 
@@ -206,6 +213,38 @@ Two more fields ride along on every row `awardXp` writes:
   was tried first and was not (see `AnalyticsService.xpHistory`'s own history for the bug this
   caused). Both fields are nullable, since rows written before they existed have nothing to
   backfill `eventId` with (`sourceName` was backfilled best-effort from current entity titles).
+
+### XP Bundles: per-skill overrides and attribute-only bonuses
+
+By default, every skill tagged on an activity earns that activity's full flat `amount` (see
+above), and no attribute can be credited without going through a tagged skill first. "XP
+Bundles" is an opt-in refinement on top of that default, expressed entirely through
+`AwardXpParams.skillAwards[].amount` and `AwardXpParams.attributeBonuses`:
+
+- **Per-skill override** (`skillAwards[].amount`) — gives one specific tagged skill its own
+  reward instead of inheriting the activity's flat `amount`. E.g. a "Deadlift PR" quest tagged
+  with a Strength skill might flatly reward 100 XP to most tagged skills, but override Strength
+  specifically to 250. The override also becomes that skill's attribute-cascade amount (the
+  skill and its attribute always move together, still following the existing double-null
+  invariant above) — the character-level row is unaffected either way, since it always uses the
+  top-level `amount` regardless of any per-skill overrides.
+- **Attribute-only bonus** (`attributeBonuses`) — credits an attribute directly with no tagged
+  skill at all. E.g. that same "Deadlift PR" quest could also bump Discipline by 20 XP without
+  tagging any Discipline skill. This writes exactly one `XPTransaction` per bonus (`skillId:
+  null`, `attributeId` set), touching only that attribute — no character row, no skill row.
+
+Both fields are deduped by key (`skillId` / `attributeId` respectively — first occurrence wins)
+and validated the same way `amount` itself is: `awardXp` throws `BadRequestException` if any
+override or bonus `amount` is present and not a positive integer. Ownership/consistency checks
+(a `skillRewardOverrides[].skillId` must be one of the activity's own tagged `skillIds`; an
+`attributeBonuses[].attributeId` must be an attribute the user owns) happen one layer up, in
+`QuestsService`/`HabitsService`/`GoalsService.validateRewardBundle` — `XpService` itself only
+enforces the amount-positivity rule, since by the time a call reaches it, ownership has already
+been settled.
+
+On the frontend, both fields are edited together via the `RewardBundleEditor` component
+(`frontend/src/components/ui/reward-bundle-editor.tsx`), a collapsed-by-default "Advanced
+rewards" disclosure in each of the Quest/Habit/Goal creation modals — see `docs/frontend.md`.
 
 ### Corrections: the one path outside the cascade
 

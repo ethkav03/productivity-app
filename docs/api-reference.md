@@ -398,6 +398,8 @@ Response: `200 OK`, array of `Quest`:
   createdAt: string;
   updatedAt: string;
   skills: Skill[];                  // flattened from the questSkills join table
+  skillRewardOverrides: Array<{ skillId: string; amount: number }>;  // "XP Bundles" - see below
+  attributeBonuses: Array<{ attributeId: string; attributeName: string; amount: number }>;
   goal: { id: string; title: string } | null;
   completedToday: boolean;          // derived: for RECURRING quests, lastCompletedAt is today;
                                      // for others, status === 'COMPLETED'
@@ -419,6 +421,8 @@ Request body (`CreateQuestDto`):
   xpReward?: number;      // int, >= 1. Defaults from difficulty if omitted (see DIFFICULTY_XP below)
   goalId?: string;        // @IsUUID, must be a goal owned by the caller
   skillIds?: string[];    // each @IsUUID, must all be skills owned by the caller
+  skillRewardOverrides?: Array<{ skillId: string; amount: number }>;  // "XP Bundles" - see below
+  attributeBonuses?: Array<{ attributeId: string; amount: number }>;
   deadline?: string;      // @IsISO8601
 }
 ```
@@ -434,9 +438,20 @@ If `xpReward` is omitted, it is derived from `difficulty` via a fixed table
 | EPIC        | 250        |
 | LEGENDARY   | 500        |
 
+**"XP Bundles" — `skillRewardOverrides` and `attributeBonuses`:** both fields are optional and
+additive; omitting them fully reproduces pre-Bundle behavior (every tagged skill earns the flat
+`xpReward`, no attribute-only bonus). `skillRewardOverrides` gives one of the *currently-tagged*
+skills (`skillIds`) its own reward amount instead of inheriting `xpReward` — each `skillId` must
+appear in `skillIds`, or the request is rejected. `attributeBonuses` awards bonus XP straight to
+an attribute the caller owns, independent of any tagged skill (e.g. a "Gym Session" quest tagged
+with a Strength skill that also nudges Discipline). Identical fields exist on `CreateHabitDto`
+and `CreateGoalDto` below. See `docs/gameplay-systems.md` for the full mechanics.
+
 Response: `201 Created` with the new `Quest`.
 
-Errors: `404 Not Found` if `goalId` or any `skillIds` entry isn't owned by the caller.
+Errors: `404 Not Found` if `goalId`, any `skillIds` entry, or any `attributeBonuses[].attributeId`
+isn't owned by the caller; `400 Bad Request` if a `skillRewardOverrides[].skillId` isn't in
+`skillIds`, or if any override/bonus `amount` is not a positive integer.
 
 ### `GET /quests/:id`
 
@@ -457,6 +472,8 @@ Partially update a quest. Body is `UpdateQuestDto = PartialType(CreateQuestDto) 
   xpReward?: number;
   goalId?: string;         // if present (non-null), must be owned by caller
   skillIds?: string[];     // if present, fully replaces the quest's skill tags
+  skillRewardOverrides?: Array<{ skillId: string; amount: number }>;  // if present, fully replaces the overrides
+  attributeBonuses?: Array<{ attributeId: string; amount: number }>;  // if present, fully replaces the bonuses
   deadline?: string;
   status?: QuestStatus;    // 'ACTIVE' | 'COMPLETED' | 'ARCHIVED' - direct status write, bypasses XP flow
 }
@@ -464,7 +481,10 @@ Partially update a quest. Body is `UpdateQuestDto = PartialType(CreateQuestDto) 
 
 Response: `200 OK` with the updated `Quest`.
 
-Errors: `404` / `403` for the quest; `404 Not Found` for an unowned `goalId` or `skillIds` entry.
+Errors: `404` / `403` for the quest; `404 Not Found` for an unowned `goalId`, `skillIds`, or
+`attributeBonuses[].attributeId` entry; `400 Bad Request` if a `skillRewardOverrides[].skillId`
+isn't in the quest's (possibly just-updated) `skillIds`, or if any override/bonus `amount` is not
+a positive integer.
 
 Note: setting `status: 'COMPLETED'` via `PATCH` does **not** award XP or run the completion
 workflow — only `POST /quests/:id/complete` does that.
@@ -523,6 +543,8 @@ Response: `200 OK`, array of `Habit`:
   createdAt: string;
   updatedAt: string;
   skills: Skill[];           // flattened from the habitSkills join table
+  skillRewardOverrides: Array<{ skillId: string; amount: number }>;  // "XP Bundles" - see POST /quests
+  attributeBonuses: Array<{ attributeId: string; attributeName: string; amount: number }>;
   completedToday: boolean;   // derived from HabitCompletion for today's periodKey
 }
 ```
@@ -541,12 +563,16 @@ Request body (`CreateHabitDto`):
   timeOfDay?: string;      // "HH:mm", 24-hour, matches /^([01]\d|2[0-3]):[0-5]\d$/
   xpReward?: number;       // int, >= 1. Default 10 if omitted
   skillIds?: string[];     // each @IsUUID, must be owned by the caller
+  skillRewardOverrides?: Array<{ skillId: string; amount: number }>;  // "XP Bundles" - see POST /quests
+  attributeBonuses?: Array<{ attributeId: string; amount: number }>;
 }
 ```
 
 Response: `201 Created` with the new `Habit` (`completedToday: false`).
 
-Errors: `404 Not Found` if any `skillIds` entry isn't owned by the caller.
+Errors: `404 Not Found` if any `skillIds` entry or `attributeBonuses[].attributeId` isn't owned by
+the caller; `400 Bad Request` if a `skillRewardOverrides[].skillId` isn't in `skillIds`, or if any
+override/bonus `amount` is not a positive integer.
 
 ### `PATCH /habits/:id`
 
@@ -562,13 +588,18 @@ Body is `UpdateHabitDto = PartialType(CreateHabitDto) & { isActive?: boolean }`:
   timeOfDay?: string;
   xpReward?: number;
   skillIds?: string[];   // if present, fully replaces the habit's skill tags
+  skillRewardOverrides?: Array<{ skillId: string; amount: number }>;  // if present, fully replaces the overrides
+  attributeBonuses?: Array<{ attributeId: string; amount: number }>;  // if present, fully replaces the bonuses
   isActive?: boolean;    // pause/resume the habit
 }
 ```
 
 Response: `200 OK` with the updated `Habit`.
 
-Errors: `404` / `403` for the habit; `404 Not Found` for an unowned `skillIds` entry.
+Errors: `404` / `403` for the habit; `404 Not Found` for an unowned `skillIds` or
+`attributeBonuses[].attributeId` entry; `400 Bad Request` if a `skillRewardOverrides[].skillId`
+isn't in the habit's (possibly just-updated) `skillIds`, or if any override/bonus `amount` is not
+a positive integer.
 
 ### `DELETE /habits/:id`
 
@@ -628,6 +659,8 @@ Response: `200 OK`, array of `Goal`:
   createdAt: string;
   updatedAt: string;
   skills: Skill[];             // flattened from the goalSkills join table
+  skillRewardOverrides: Array<{ skillId: string; amount: number }>;  // "XP Bundles" - see POST /quests
+  attributeBonuses: Array<{ attributeId: string; attributeName: string; amount: number }>;
   progressPercent: number;     // derived, 0-100, see rules below
 }
 ```
@@ -654,6 +687,8 @@ Request body (`CreateGoalDto`):
   targetDate?: string;         // @IsISO8601
   xpReward?: number;           // int, >= 1. Default 500 if omitted
   skillIds?: string[];         // each @IsUUID, must be owned by the caller
+  skillRewardOverrides?: Array<{ skillId: string; amount: number }>;  // "XP Bundles" - see POST /quests
+  attributeBonuses?: Array<{ attributeId: string; amount: number }>;
 }
 ```
 
@@ -664,8 +699,10 @@ effect, but are not returned from this endpoint.
 
 Response: `201 Created` with the new `Goal`.
 
-Errors: `404 Not Found` for an unowned `skillIds` entry; `400 Bad Request` if `type` is `NUMERIC`
-or `COMPLETION` and `targetValue` is omitted.
+Errors: `404 Not Found` for an unowned `skillIds` or `attributeBonuses[].attributeId` entry; `400
+Bad Request` if `type` is `NUMERIC` or `COMPLETION` and `targetValue` is omitted, if a
+`skillRewardOverrides[].skillId` isn't in `skillIds`, or if any override/bonus `amount` is not a
+positive integer.
 
 ### `GET /goals/:id`
 
@@ -689,6 +726,8 @@ Body is `UpdateGoalDto = PartialType(CreateGoalDto) & { status?: GoalStatus }`:
   targetDate?: string;
   xpReward?: number;
   skillIds?: string[];   // if present, fully replaces the goal's skill tags
+  skillRewardOverrides?: Array<{ skillId: string; amount: number }>;  // if present, fully replaces the overrides
+  attributeBonuses?: Array<{ attributeId: string; amount: number }>;  // if present, fully replaces the bonuses
   status?: GoalStatus;   // 'ACTIVE' | 'COMPLETED' | 'ABANDONED' - direct status write, bypasses XP flow
 }
 // Note: `type` is inherited from PartialType(CreateGoalDto) in the DTO's type signature but the
@@ -697,7 +736,10 @@ Body is `UpdateGoalDto = PartialType(CreateGoalDto) & { status?: GoalStatus }`:
 
 Response: `200 OK` with the updated `Goal`.
 
-Errors: `404` / `403` for the goal; `404 Not Found` for an unowned `skillIds` entry.
+Errors: `404` / `403` for the goal; `404 Not Found` for an unowned `skillIds` or
+`attributeBonuses[].attributeId` entry; `400 Bad Request` if a `skillRewardOverrides[].skillId`
+isn't in the goal's (possibly just-updated) `skillIds`, or if any override/bonus `amount` is not a
+positive integer.
 
 ### `POST /goals/:id/progress`
 
