@@ -48,6 +48,14 @@ enum QuestStatus {
   ARCHIVED
 }
 
+enum QuestRequirementType {
+  LEVEL_THRESHOLD
+  ACTIVITY_COUNT
+  ACHIEVEMENT
+  QUEST_COMPLETED
+  GOAL_COMPLETED
+}
+
 enum HabitFrequency {
   DAILY
   DAYS_OF_WEEK
@@ -128,6 +136,7 @@ model User {
   quests                 Quest[]
   habits                 Habit[]
   habitCompletions       HabitCompletion[]
+  questCompletions       QuestCompletion[]
   xpTransactions         XPTransaction[]
   userAchievements       UserAchievement[]
   notifications          Notification[]
@@ -182,10 +191,11 @@ model Attribute {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user            User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  skills          Skill[]
-  xpTransactions  XPTransaction[]
-  activityBonuses ActivityAttributeBonus[]
+  user              User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skills            Skill[]
+  xpTransactions    XPTransaction[]
+  activityBonuses   ActivityAttributeBonus[]
+  questRequirements QuestRequirement[]
 
   @@unique([userId, key])
   @@index([userId])
@@ -236,12 +246,13 @@ model Skill {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  attribute      Attribute       @relation(fields: [attributeId], references: [id], onDelete: Cascade)
-  questSkills    QuestSkill[]
-  habitSkills    HabitSkill[]
-  goalSkills     GoalSkill[]
-  xpTransactions XPTransaction[]
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attribute         Attribute          @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+  questSkills       QuestSkill[]
+  habitSkills       HabitSkill[]
+  goalSkills        GoalSkill[]
+  xpTransactions    XPTransaction[]
+  questRequirements QuestRequirement[]
 
   // Same skill name can exist under different attributes (e.g. "Focus" under
   // both Intelligence and Discipline) as distinct stats, so uniqueness is
@@ -274,10 +285,11 @@ model Goal {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user             User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  quests           Quest[]
-  goalSkills       GoalSkill[]
-  attributeBonuses ActivityAttributeBonus[]
+  user              User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  quests            Quest[]
+  goalSkills        GoalSkill[]
+  attributeBonuses  ActivityAttributeBonus[]
+  questRequirements QuestRequirement[]       @relation("RequiredByGoal")
 
   @@index([userId])
   @@map("goals")
@@ -322,10 +334,94 @@ model Quest {
   goal             Goal?                    @relation(fields: [goalId], references: [id], onDelete: SetNull)
   questSkills      QuestSkill[]
   attributeBonuses ActivityAttributeBonus[]
+  requirements     QuestRequirement[]       @relation("QuestOwnRequirements")
+  requiredByQuests QuestRequirement[]       @relation("RequiredByQuest")
+  completions      QuestCompletion[]
 
   @@index([userId])
   @@index([goalId])
   @@map("quests")
+}
+
+/// A single prerequisite a quest must satisfy before it can be completed
+/// ("level-gated quests"). Five types, reusing a shared set of nullable
+/// columns across them (mirrors how Achievement reuses skillName/attributeKey
+/// across its requirement types) rather than one table per type. A locked
+/// quest (unmet requirements) is never hidden - QuestsService computes
+/// isLocked/requirements at read time; this model only stores the conditions,
+/// not any derived locked/unlocked state.
+model QuestRequirement {
+  id      String               @id @default(uuid())
+  questId String
+  type    QuestRequirementType
+
+  /// LEVEL_THRESHOLD: skillId+attributeId both null = character level;
+  /// skillId set = that skill's level; attributeId set = that attribute's
+  /// level. ACTIVITY_COUNT: skillId required - count of completed activities
+  /// tagged with that skill (same query shape as
+  /// AchievementsService's SKILL_ACTIVITY_COUNT case).
+  skillId     String?
+  attributeId String?
+  /// LEVEL_THRESHOLD target level.
+  level       Int?
+  /// ACTIVITY_COUNT target count.
+  count       Int?
+
+  /// ACHIEVEMENT: the specific achievement that must be unlocked.
+  achievementId String?
+  /// QUEST_COMPLETED: a specific other quest that must be completed - not
+  /// "any quest".
+  requiredQuestId String?
+  /// GOAL_COMPLETED: a specific goal that must be completed - not "any goal",
+  /// mirroring QUEST_COMPLETED's specificity (more composable than a vague
+  /// "complete something").
+  requiredGoalId String?
+
+  quest         Quest        @relation("QuestOwnRequirements", fields: [questId], references: [id], onDelete: Cascade)
+  skill         Skill?       @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  attribute     Attribute?   @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+  achievement   Achievement? @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  requiredQuest Quest?       @relation("RequiredByQuest", fields: [requiredQuestId], references: [id], onDelete: Cascade)
+  requiredGoal  Goal?        @relation("RequiredByGoal", fields: [requiredGoalId], references: [id], onDelete: Cascade)
+
+  @@index([questId])
+  @@index([skillId])
+  @@index([attributeId])
+  @@index([achievementId])
+  @@index([requiredQuestId])
+  @@index([requiredGoalId])
+  @@map("quest_requirements")
+}
+
+/// One record per quest completion (not per quest - a RECURRING quest
+/// completes many times, each independently claimable). Completing a quest
+/// creates this row but does NOT award XP; a separate claim step
+/// (QuestsService.claimReward) does, matching the roadmap's
+/// COMPLETED -> REWARD CLAIMED state. Deliberately does not snapshot the
+/// reward: claiming re-reads the quest's *current* xpReward/tagged
+/// skills/XP Bundle config, same as complete() always has - editing a
+/// quest's reward between completing and claiming it changes what's paid
+/// out (see docs/gameplay-systems.md for the tradeoff).
+model QuestCompletion {
+  id      String @id @default(uuid())
+  questId String
+  userId  String
+  /// "once" for ONE_TIME/DEADLINE/MILESTONE quests; a day-key (getDayKey())
+  /// for RECURRING quests - same per-period dedup mechanism HabitCompletion
+  /// already uses via its own periodKey.
+  periodKey String
+
+  completedAt DateTime  @default(now())
+  /// Null = reward not yet claimed.
+  claimedAt   DateTime?
+
+  quest Quest @relation(fields: [questId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([questId, periodKey])
+  @@index([userId])
+  @@index([questId])
+  @@map("quest_completions")
 }
 
 model QuestSkill {
@@ -451,7 +547,8 @@ model Achievement {
 
   createdAt DateTime @default(now())
 
-  userAchievements UserAchievement[]
+  userAchievements  UserAchievement[]
+  questRequirements QuestRequirement[]
 
   @@map("achievements")
 }

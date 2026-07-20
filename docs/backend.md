@@ -414,35 +414,58 @@ that and call `create`.
 
 ### `QuestsModule` (`backend/src/quests/`)
 
-CRUD + completion for one-time and recurring quests, optionally linked to a `Goal` and to one
-or more skills (`QuestSkill` join rows).
+CRUD + completion for one-time and recurring quests, optionally linked to a `Goal`, to one or
+more skills (`QuestSkill` join rows), and locked behind zero or more prerequisites
+(`QuestRequirement` — "level-gated quests").
 
 - **Imports:** `ProgressionModule`, `SkillsModule`, `AttributesModule`.
 - **Controller:** `QuestsController` — `GET /api/quests` (filterable by `status`/`goalId`),
   `POST /api/quests`, `GET /api/quests/:id`, `PATCH /api/quests/:id`,
-  `POST /api/quests/:id/complete`, `DELETE /api/quests/:id` — all guarded.
+  `POST /api/quests/:id/complete`, `POST /api/quests/:id/claim`, `DELETE /api/quests/:id` — all
+  guarded.
 - **Exports:** `QuestsService`.
   - `findAll(userId, filters)` / `findOne(userId, id)` — list/detail, serialized with a
     `completedToday` flag (recurring quests: last completion was today; one-time: `status ===
-    'COMPLETED'`), plus `skillRewardOverrides` (from `QuestSkill.amount`) and `attributeBonuses`
-    ("XP Bundles" — see `docs/gameplay-systems.md`).
-  - `create(userId, dto)` — validates owned goal (if linked) and owned skills, defaults
-    `difficulty: MEDIUM`, `type: ONE_TIME`, and `xpReward` from `DIFFICULTY_XP[difficulty]` if
-    not given, creates the quest and its `QuestSkill` rows (each carrying its
-    `skillRewardOverrides` entry, if any, as `amount`) and `ActivityAttributeBonus` rows.
-  - `update(userId, id, dto)` — validates ownership/linked goal/skills, replaces skill links if
-    `skillIds` provided, updates scalar fields; replaces `skillRewardOverrides` and
-    `attributeBonuses` wholesale when either is provided.
-  - `remove(userId, id)` — validates ownership, deletes.
-  - `complete(userId, id)` — blocks archived quests and (for recurring quests) same-day
-    re-completion, or (for one-time quests) re-completion at all; updates the quest's
-    completion state, then calls `ProgressionService.completeActivity` with
-    `sourceType: 'QUEST_COMPLETION'`, `skillAwards` derived from the quest's `questSkills`
-    (`{ skillId, amount: qs.amount ?? undefined }`), and `attributeBonuses` from the quest's
-    `ActivityAttributeBonus` rows.
+    'COMPLETED'`), `skillRewardOverrides`/`attributeBonuses` ("XP Bundles" — see
+    `docs/gameplay-systems.md`), and `isLocked`/`requirements`/`unclaimedCompletions`
+    ("level-gated quests"/"reward claiming" — see below). Requirement evaluation batches one
+    `buildRequirementSnapshot` call per request (not per quest) via `quest-requirements.ts`.
+  - `create(userId, dto)` — validates owned goal (if linked), owned skills, and requirements
+    (`validateRequirements`); defaults `difficulty: MEDIUM`, `type: ONE_TIME`, and `xpReward`
+    from `DIFFICULTY_XP[difficulty]` if not given; creates the quest and its `QuestSkill` rows
+    (each carrying its `skillRewardOverrides` entry, if any, as `amount`), `ActivityAttributeBonus`
+    rows, and `QuestRequirement` rows.
+  - `update(userId, id, dto)` — validates ownership/linked goal/skills/requirements, replaces
+    skill links if `skillIds` provided, updates scalar fields; replaces `skillRewardOverrides`,
+    `attributeBonuses`, and `requirements` wholesale when each is provided.
+  - `remove(userId, id)` — validates ownership, deletes (cascades its `QuestRequirement`s,
+    `QuestCompletion`s, and any *other* quest's `QuestRequirement` that required this one).
+  - `complete(userId, id)` — blocks archived and locked quests (`400` if any requirement is
+    unmet), and (for recurring quests) same-day re-completion via `getDayKey()`, or (for
+    one-time quests) re-completion at all — both backed by `QuestCompletion`'s
+    `[questId, periodKey]` unique constraint, caught as `P2002` and converted to `409 Conflict`
+    (same pattern as `HabitsService.complete`). Creates a `QuestCompletion` row and updates the
+    quest's completion state (`status`/`completedAt` or `lastCompletedAt`), but does **not**
+    award XP — see `claimReward` below.
+  - `claimReward(userId, id)` — finds every `QuestCompletion` with `claimedAt: null` for this
+    quest, and for each (oldest first) calls `ProgressionService.completeActivity` with
+    `sourceType: 'QUEST_COMPLETION'`, `skillAwards` derived from the quest's *current*
+    `questSkills`, and `attributeBonuses` from its *current* `ActivityAttributeBonus` rows (not a
+    snapshot from completion time), then stamps `claimedAt`. Returns one `CompletionResult` per
+    completion claimed. `409 Conflict` if nothing is pending.
   - *(private)* `assertOwnedGoal`, `getOwnedQuest`, `validateRewardBundle` (checks every
     `skillRewardOverrides[].skillId` is in the request's `skillIds`, and delegates to
-    `AttributesService.assertOwnedAttributeIds` for `attributeBonuses`).
+    `AttributesService.assertOwnedAttributeIds` for `attributeBonuses`), `validateRequirements`
+    (per-type field validation plus ownership checks — delegates to `SkillsService`/
+    `AttributesService`/`getOwnedQuest`/`assertOwnedGoal`; rejects a `QUEST_COMPLETED`
+    requirement pointing at the quest's own id on update).
+- **`backend/src/quests/quest-requirements.ts`** (plain utility, not a provider):
+  `buildRequirementSnapshot(prisma, userId)` batch-fetches the user's character level, skill
+  levels, attribute levels, per-skill activity counts (`XPTransaction` grouped by `skillId`),
+  unlocked achievements, completed quests, and completed goals in one `Promise.all` — the same
+  data-driven-condition shape as `AchievementsService.isConditionMet`, just computed once per
+  request rather than once per quest. `evaluateRequirement`/`evaluateRequirements` turn a
+  `QuestRequirement` row plus that snapshot into `{ type, description, met, progress? }`.
 - **Depended on by:** nothing (only `AppModule`).
 
 ### `HabitsModule` (`backend/src/habits/`)

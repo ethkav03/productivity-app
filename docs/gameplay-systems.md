@@ -42,7 +42,7 @@ Goals → Quests / Habits → Complete them → XP → Skills level up → Attri
 
 Quests, habits, and goals never call `XpService` or `AchievementsService` directly - they all
 funnel through `ProgressionService.completeActivity` (goal creation is the one exception, see
-section 7).
+section 8).
 
 ## 2. The attribute hierarchy
 
@@ -92,7 +92,7 @@ onboarding flow) explicitly creates `Skill` rows, each pointing at exactly one a
 on `model Skill`. This means the same skill name can legitimately exist twice for one user, as
 long as it's under two different attributes - e.g. a skill named "Focus" as a distinct stat under
 both Intelligence and Discipline. Any code that looks up a skill by `(userId, name)` alone (e.g.
-achievement conditions - see section 7) must also disambiguate by attribute when the name isn't
+achievement conditions - see section 8) must also disambiguate by attribute when the name isn't
 unique for that user.
 
 **Default skill suggestions.** `backend/src/skills/default-skills.ts` exports `DEFAULT_SKILLS`, a
@@ -338,8 +338,10 @@ quest's `xpReward` isn't explicitly set:
 
 `ProgressionService.completeActivity` (`backend/src/progression/progression.service.ts`) is the
 single orchestration point for "what happens when a user completes an activity," per its
-docstring reference to "the MVP spec (section 16)." `QuestsService.complete`,
-`HabitsService.complete`, and `GoalsService.progress` all call this rather than touching
+docstring reference to "the MVP spec (section 16)." `HabitsService.complete` and
+`GoalsService.progress` call this directly when their activity completes; `QuestsService` calls it
+from `claimReward`, not `complete` - completing a quest only creates a `QuestCompletion` row, and
+the actual XP award waits for a separate claim step (section 7). None of the three touch
 `XpService`/`AchievementsService` themselves. It executes in this exact order:
 
 1. **Award XP.** `this.xpService.awardXp({ userId, amount, sourceType, sourceId, skillAwards,
@@ -439,57 +441,45 @@ streak.
 
 ## 6. Duplicate-completion safety
 
-Three different mechanisms guard against double-awarding XP for the same completion, one per
-activity type. In every case, **the state-changing write that blocks the duplicate happens before
-`ProgressionService.completeActivity` (and therefore before any XP is awarded)** - so a retried or
-duplicate request either fails outright on the second attempt, or is rejected before it ever
-reaches `XpService.awardXp`. This ordering is what makes double-XP structurally impossible rather
-than just unlikely.
+Two mechanisms guard against double-awarding XP for the same completion - both are now database
+unique constraints, not application-level read-then-write checks. In both cases, **the
+constrained insert happens before `ProgressionService.completeActivity` (and therefore before any
+XP is awarded)**, so a duplicate request fails outright on the second attempt rather than racing
+against a stale in-memory read.
 
-### One-time quests: status check
+### Quests: `QuestCompletion` unique constraint
 
-`QuestsService.complete` (`backend/src/quests/quests.service.ts`), non-`RECURRING` branch:
-
-```ts
-if (quest.status === 'COMPLETED') {
-  throw new ConflictException('Quest already completed');
-}
-await this.prisma.quest.update({
-  where: { id },
-  data: { status: 'COMPLETED', completedAt: new Date() },
-});
-```
-
-The status transition `ACTIVE → COMPLETED` is written first. Only after that write succeeds does
-the method call `this.progressionService.completeActivity(...)`. A second call against the same
-quest re-reads `quest.status === 'COMPLETED'` (from the fresh `findUnique` at the top of
-`complete`) and throws `ConflictException` before reaching the update or the XP award. (Archived
-quests are also rejected up front, via a separate `status === 'ARCHIVED'` check.)
-
-### Recurring quests: `lastCompletedAt` day-key comparison
-
-Same method, `RECURRING` branch:
+`QuestsService.complete` (`backend/src/quests/quests.service.ts`) inserts a `QuestCompletion` row
+*first*, inside a `$transaction` alongside the quest's own state update, inside a try/catch:
 
 ```ts
-if (quest.lastCompletedAt && getDayKey(quest.lastCompletedAt) === today) {
-  throw new ConflictException('Quest already completed today');
+const periodKey = quest.type === 'RECURRING' ? getDayKey() : 'once';
+
+try {
+  await this.prisma.$transaction([
+    this.prisma.questCompletion.create({ data: { questId: id, userId, periodKey } }),
+    quest.type === 'RECURRING'
+      ? this.prisma.quest.update({ where: { id }, data: { lastCompletedAt: new Date() } })
+      : this.prisma.quest.update({ where: { id }, data: { status: 'COMPLETED', completedAt: new Date() } }),
+  ]);
+} catch (error) {
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+    throw new ConflictException(/* ... */);
+  }
+  throw error;
 }
-await this.prisma.quest.update({
-  where: { id },
-  data: { lastCompletedAt: new Date() },
-});
 ```
 
-`getDayKey` reduces `lastCompletedAt` to its UTC calendar day and compares it to today's day key.
-As with one-time quests, the `lastCompletedAt` write happens before `completeActivity` is called,
-so a duplicate request re-reads the now-updated `lastCompletedAt`, sees it matches today, and is
-rejected. There is no database constraint backing this (`Quest.lastCompletedAt` is a plain
-nullable `DateTime` column) - the guard is purely the application-level read-then-write, so it
-relies on there being no concurrent-write race that reads stale state (Prisma's transactional
-consistency and the request being scoped to a single user reduce this risk in practice, but it is
-not enforced by a unique index the way habits are).
+Backed by an actual schema-level guarantee: `model QuestCompletion` has
+`@@unique([questId, periodKey])`. `periodKey` is `"once"` for `ONE_TIME`/`DEADLINE`/`MILESTONE`
+quests (so at most one `QuestCompletion` can ever exist for such a quest, full stop) or today's
+UTC day key for `RECURRING` quests (so at most one exists per quest per calendar day) - the exact
+same per-period dedup mechanism `HabitCompletion` already used, just generalized to cover
+non-recurring quests too via the constant `"once"` key. A duplicate insert raises Prisma error
+code `P2002`, caught and translated to `409 Conflict`. **Crucially, this only marks the
+completion - it does not call `completeActivity` at all.** See "Reward claiming" below for why.
 
-### Habits: database unique constraint
+### Habits: `HabitCompletion` unique constraint
 
 `HabitsService.complete` (`backend/src/habits/habits.service.ts`) inserts a `HabitCompletion` row
 *first*, inside a try/catch, before doing anything else:
@@ -507,22 +497,82 @@ try {
 }
 ```
 
-This is backed by an actual schema-level guarantee: `model HabitCompletion` has
-`@@unique([habitId, periodKey])` in `backend/prisma/schema.prisma`. `periodKey` is today's UTC
-day key (`getDayKey()`), so at most one `HabitCompletion` row can ever exist per habit per
-calendar day, regardless of the habit's configured `frequency` (`DAILY`/`WEEKLY`/`MONTHLY` - all
-are keyed by day for completion-locking purposes, per the comment in `period.ts`). A duplicate
-insert raises Prisma error code `P2002` (unique constraint violation), which is caught and
-translated to a `409 ConflictException`. Only after the insert succeeds does the method compute
-the habit's own streak (via `nextStreakValue`, using the *previous* `HabitCompletion` row's
-`periodKey`) and update the `Habit` row, and only after that does it call
-`this.progressionService.completeActivity(...)`.
+Backed by `@@unique([habitId, periodKey])` on `HabitCompletion`. `periodKey` is today's UTC day
+key (`getDayKey()`), so at most one `HabitCompletion` row can ever exist per habit per calendar
+day, regardless of the habit's configured `frequency` (`DAILY`/`WEEKLY`/`MONTHLY` - all are keyed
+by day for completion-locking purposes, per the comment in `period.ts`). Only after the insert
+succeeds does the method compute the habit's own streak (via `nextStreakValue`, using the
+*previous* `HabitCompletion` row's `periodKey`), update the `Habit` row, and call
+`this.progressionService.completeActivity(...)` - habits keep the instant-reward flow; unlike
+quests, there is no separate claim step.
 
-Unlike the quest checks (an application-level read that can theoretically race), the habit
-mechanism is safe under concurrent duplicate requests because the database itself enforces
-uniqueness - even two simultaneous requests can't both succeed the insert.
+Both mechanisms are safe under concurrent duplicate requests because the database itself enforces
+uniqueness - even two simultaneous requests can't both succeed the insert. (Goals have no
+analogous per-period constraint: `GoalsService.progress` guards re-completion via `status !==
+'ACTIVE'` instead, since a goal can only ever complete once, not repeatedly.)
 
-## 7. The achievement engine
+## 7. Level-gated quests and reward claiming (Feature 1)
+
+Two related but independent additions to the quest model, both scoped to quests only (habits and
+goals are unaffected):
+
+### Requirements and locking
+
+A quest can carry zero or more `QuestRequirement` rows (`backend/prisma/schema.prisma`), each one
+of five types: `LEVEL_THRESHOLD` (character, a skill, or an attribute reaches a level),
+`ACTIVITY_COUNT` (a skill has been used in N completed activities), `ACHIEVEMENT` (a specific
+achievement is unlocked), `QUEST_COMPLETED` (a specific other quest is completed), or
+`GOAL_COMPLETED` (a specific goal is completed).
+
+Locked/unlocked is **computed at read time, not stored**. `QuestsService` and
+`quest-requirements.ts` (`buildRequirementSnapshot` + `evaluateRequirements`) batch-fetch the
+caller's current level/skills/attributes/achievements/quest completions/goal completions *once*
+per list or detail request - not once per quest - then evaluate every quest's requirements
+against that shared snapshot, mirroring `AchievementsService.isConditionMet`'s data-driven
+condition pattern but computed in bulk to avoid N+1 queries across a whole quest list. Every
+serialized quest gets `isLocked: boolean` and `requirements: Array<{ type, description, met,
+progress? }>` - **a locked quest is never hidden**, it's shown with its requirements and how
+close each one is to being met (e.g. `{ description: "Complete 20 Running activities", met:
+false, progress: { current: 7, target: 20 } }`). `QuestsService.complete()` rejects with `400 Bad
+Request` if any requirement is unmet.
+
+`Quest.status` itself is untouched by locking - a locked quest is still `status: 'ACTIVE'` in the
+database. This was a deliberate scope decision: the roadmap's full state machine
+(`LOCKED → AVAILABLE → ACTIVE → COMPLETED → REWARD CLAIMED`, plus `FAILED`/`EXPIRED`) would mean
+a second, parallel notion of "state" layered on top of the existing `QuestStatus` enum that every
+other part of the app (status tabs, `GET /quests?status=`) already filters on. Computing
+`isLocked` instead keeps `QuestStatus` meaning exactly what it always has, while still delivering
+the actual product value (a quest visibly gated behind progress). `FAILED`/`EXPIRED` aren't
+implemented at all yet - out of scope for this slice.
+
+### Reward claiming
+
+Completing a quest (`POST /quests/:id/complete`) creates a `QuestCompletion` row but **does not
+award XP**. A separate step, `POST /quests/:id/claim` (`QuestsService.claimReward`), does that -
+matching the roadmap's `COMPLETED → REWARD CLAIMED` state, without needing a new `QuestStatus`
+value (claim state lives on `QuestCompletion.claimedAt` instead, which can differ per completion).
+
+This needed its own model rather than a boolean flag on `Quest`, because a `RECURRING` quest
+completes many times (once per period) and each completion is independently claimable - if the
+caller doesn't open the app for a few days, several unclaimed completions can stack up. `claimReward`
+finds every `QuestCompletion` with `claimedAt: null` for the quest and calls
+`ProgressionService.completeActivity` once per completion (oldest first), so the XP ledger keeps
+one event per actual completion rather than summing them into one inflated award, then stamps
+`claimedAt` on each.
+
+**Deliberate simplification: the reward isn't snapshotted at completion time.** `claimReward`
+re-reads the quest's *current* `xpReward`, tagged `questSkills`, and `ActivityAttributeBonus` rows
+- exactly what `complete()` always read before this model existed. If a quest's reward is edited
+between completing and claiming it, the claimed amount reflects the *new* config, not what it was
+when completed. No other flow in the app snapshots rewards either (an edited habit's `xpReward`
+likewise only affects future completions going forward, not retroactively); adding snapshot
+columns to `QuestCompletion` is a cheap follow-up if this ever becomes a real product problem.
+
+On the frontend, `completeQuest`/`claimQuestReward` (`frontend/src/lib/api/quests.ts`) are
+separate calls; `useCelebration()` only fires after a successful claim (a bare `complete()` moves
+no XP, so there's nothing to celebrate yet) - see `docs/frontend.md`.
+
+## 8. The achievement engine
 
 `AchievementsService.checkAndUnlock(userId)` (`backend/src/achievements/achievements.service.ts`)
 is **data-driven**: it does not have a `switch` per achievement *name*. Instead, it loads every
@@ -563,8 +613,9 @@ alone could match either of two same-named skills unpredictably.
 
 ### Where `checkAndUnlock` is called from
 
-- **`ProgressionService.completeActivity`** (step 4 of section 5) - runs after every quest,
-  habit, and goal-progress completion, since those all go through XP-awarding events.
+- **`ProgressionService.completeActivity`** (step 3 of section 5) - runs after every quest reward
+  claim, habit completion, and goal-progress completion, since those all go through
+  XP-awarding events (a quest *completion* alone, before it's claimed, does not run this).
 - **`GoalsService.create`**, directly, immediately after creating the goal - because
   creation-driven achievements (e.g. "Goal Setter," which fires on `GOALS_CREATED` reaching 1)
   have no XP event to hang off. The comment in `goals.service.ts` makes this explicit:
@@ -580,7 +631,7 @@ No other resource module calls `checkAndUnlock` directly - if a future achieveme
 react to something other than a completion or a goal creation, it will need its own explicit call
 site analogous to this one.
 
-## 8. Seeded achievements
+## 9. Seeded achievements
 
 From `backend/prisma/seed.ts` (`ACHIEVEMENTS`, upserted by `key` via `npx prisma db seed`):
 
@@ -604,7 +655,7 @@ That's 13 achievements. None of the current seed rows use `SKILL_LEVEL_REACHED` 
 `SKILL_ACTIVITY_COUNT`, even though `AchievementsService` fully supports both - those two
 requirement types are implemented and ready but not yet exercised by any seeded achievement.
 
-## 9. Friends & Leaderboard
+## 10. Friends & Leaderboard
 
 `FriendsModule` (`backend/src/friends/`) and `LeaderboardModule` (`backend/src/leaderboard/`) add
 a lightweight social layer on top of the character system: a friend-request graph, and a
@@ -658,7 +709,7 @@ resettable leaderboard reads more naturally as "who's ahead this calendar week" 
 in the last 168 hours," and a calendar boundary is what lets "this week's leaderboard" mean the
 same thing to every friend looking at it, regardless of when each of them checks.
 
-## 10. Keep this file in sync
+## 11. Keep this file in sync
 
 This file documents **why** the gameplay mechanics work the way they do, not just what the code
 currently says - the reasoning here (full XP per tagged skill/attribute, the

@@ -8,7 +8,7 @@ every model, enum, and constraint currently in that schema.
 
 ## Migration history
 
-Seven migrations exist as of this writing:
+Eight migrations exist as of this writing:
 
 | Migration folder | What it added |
 | --- | --- |
@@ -19,6 +19,7 @@ Seven migrations exist as of this writing:
 | `20260720140000_xp_source_name` | Adds `XPTransaction.sourceName` (nullable) - the source entity's display name, captured at write time. Existing rows were backfilled from the current quest/habit/goal title where resolvable (best-effort; rows whose source has since been deleted stay `null`). |
 | `20260720145000_xp_event_id` | Adds `XPTransaction.eventId` (nullable) - correlates every row written by one `XpService.awardXp`/`applyCorrection` call. Not backfilled for pre-existing rows (see the field's own doc comment for why `createdAt` isn't a safe substitute). |
 | `20260720160000_xp_bundles` | Adds `amount Int?` to `QuestSkill`, `HabitSkill`, and `GoalSkill` (a per-skill XP override, null meaning "inherit the activity's flat `xpReward`"); introduces the `ActivityAttributeBonus` model (bonus XP paid directly into an attribute, with no tagged skill, for a `Quest`/`Habit`/`Goal`). Backs "XP Bundles" - see the model reference below and `docs/gameplay-systems.md`. |
+| `20260720170000_level_gated_quests` | Introduces `QuestRequirement` (a prerequisite a quest is locked behind - level threshold, activity count, achievement, another quest, or a goal) and `QuestCompletion` (one row per quest completion, tracking whether its reward has been claimed). Backs "level-gated quests" and "reward claiming" - see the model reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 1". |
 
 `migration_lock.toml` pins the schema to the `postgresql` provider (Prisma refuses to mix
 providers across migrations once this file exists).
@@ -36,6 +37,8 @@ User ──┬── Attribute (8 fixed, auto-created at registration)
        │      │      └── HabitSkill ──── Habit ──── HabitCompletion
        │      └── ActivityAttributeBonus ──── one of Goal / Quest / Habit
        ├── Goal, Quest, Habit, HabitCompletion  (also owned directly by User)
+       ├── Quest ──┬── QuestRequirement ──── one of Skill / Attribute / Achievement / Quest / Goal
+       │           └── QuestCompletion (one row per completion, tracks claimedAt)
        ├── XPTransaction (references User, and optionally Skill and/or Attribute)
        ├── UserAchievement ──── Achievement (global, not per-user)
        ├── Notification
@@ -50,7 +53,10 @@ with zero or more `Skill`s through a dedicated join table (`GoalSkill`, `QuestSk
 flat `xpReward` for that one skill ("XP Bundles" - see `docs/gameplay-systems.md`). Each
 `Goal`/`Quest`/`Habit` can also have zero or more `ActivityAttributeBonus` rows, paying bonus XP
 directly into an attribute with no tagged skill involved. A `Quest` can optionally belong to a
-`Goal`. A `Habit`'s individual check-ins are recorded as `HabitCompletion` rows. Every XP grant anywhere in the app is recorded as an
+`Goal`, can be locked behind zero or more `QuestRequirement` prerequisites ("level-gated quests"),
+and each of its completions is its own `QuestCompletion` row tracking whether the reward has been
+claimed yet ("reward claiming" - see `docs/gameplay-systems.md`). A `Habit`'s individual check-ins
+are recorded as `HabitCompletion` rows. Every XP grant anywhere in the app is recorded as an
 `XPTransaction`, which can reference a `User` alone (character-level XP), or also a `Skill`
 and/or that skill's `Attribute` (the XP cascade). `Achievement` definitions are global (not
 per-user) and unlocked per user via `UserAchievement`. `Notification` is a simple per-user
@@ -85,9 +91,9 @@ Represents an account/character: identity, auth state, and the top-level charact
 | `updatedAt` | `DateTime` | `@updatedAt` | |
 
 **Relations:** `skills[]`, `attributes[]`, `goals[]`, `quests[]`, `habits[]`,
-`habitCompletions[]`, `xpTransactions[]`, `userAchievements[]`, `notifications[]` — all
-one-to-many, all with `onDelete: Cascade` from the child side (deleting a `User` deletes every
-dependent row).
+`habitCompletions[]`, `questCompletions[]`, `xpTransactions[]`, `userAchievements[]`,
+`notifications[]` — all one-to-many, all with `onDelete: Cascade` from the child side (deleting a
+`User` deletes every dependent row).
 
 **Constraints:** none beyond the field-level `@unique` on `email` and `username`. Maps to table
 `users`.
@@ -116,7 +122,8 @@ earns in any skill that belongs to it (see `XpService.awardXp`).
 
 **Relations:** `user` (FK `userId → User.id`, `onDelete: Cascade`), `skills[]` (one attribute
 has many skills), `xpTransactions[]` (XP transactions that mirrored into this attribute),
-`activityBonuses[]` (`ActivityAttributeBonus[]` targeting this attribute).
+`activityBonuses[]` (`ActivityAttributeBonus[]` targeting this attribute), `questRequirements[]`
+(`QuestRequirement[]` using this attribute for a `LEVEL_THRESHOLD` check).
 
 **Constraints:**
 - `@@unique([userId, key])` — a user can have at most one `Attribute` row per fixed key (i.e.
@@ -148,7 +155,8 @@ exactly one `Attribute` and accrues its own XP/level independently of the charac
 
 **Relations:** `user` (`onDelete: Cascade`), `attribute` (`onDelete: Cascade`),
 `questSkills[]`, `habitSkills[]`, `goalSkills[]` (join-table rows tagging this skill onto
-quests/habits/goals), `xpTransactions[]`.
+quests/habits/goals), `xpTransactions[]`, `questRequirements[]` (`QuestRequirement[]` using this
+skill for a `LEVEL_THRESHOLD` or `ACTIVITY_COUNT` check).
 
 **Constraints:**
 - `@@unique([userId, attributeId, name])` — the same skill name can exist under different
@@ -205,7 +213,8 @@ by completion, or as a binary done/not-done.
 
 **Relations:** `user` (`onDelete: Cascade`), `quests[]` (quests that reference this goal),
 `goalSkills[]` (tagged skills via `GoalSkill`), `attributeBonuses[]`
-(`ActivityAttributeBonus[]`).
+(`ActivityAttributeBonus[]`), `questRequirements[]` (`QuestRequirement[]` with a
+`GOAL_COMPLETED` requirement pointing at this goal).
 
 **Constraints:** `@@index([userId])`. Maps to table `goals`.
 
@@ -252,9 +261,76 @@ A single unit of work a user completes; can optionally roll up into a `Goal`.
 
 **Relations:** `user` (`onDelete: Cascade`), `goal` (`onDelete: SetNull` — deleting a goal
 un-links its quests rather than deleting them), `questSkills[]`, `attributeBonuses[]`
-(`ActivityAttributeBonus[]`).
+(`ActivityAttributeBonus[]`), `requirements[]` (`QuestRequirement[]` — this quest's own
+prerequisites), `requiredByQuests[]` (`QuestRequirement[]` — other quests' `QUEST_COMPLETED`
+requirements that point at this one), `completions[]` (`QuestCompletion[]`).
 
 **Constraints:** `@@index([userId])`, `@@index([goalId])`. Maps to table `quests`.
+
+---
+
+### QuestRequirement
+
+A single prerequisite a quest is locked behind ("level-gated quests"). Five types, reusing a
+shared set of nullable columns across them (mirrors how `Achievement` reuses
+`skillName`/`attributeKey` across its requirement types) rather than one table per type. Stores
+only the *condition* - `QuestsService`/`quest-requirements.ts` compute `met`/`isLocked` at read
+time, nothing here is a cached/stored locked state.
+
+| Field | Type | Default / Nullable | Notes |
+| --- | --- | --- | --- |
+| `id` | `String` (uuid) | `@default(uuid())`, PK | |
+| `questId` | `String` | required | FK to the `Quest` this requirement gates. |
+| `type` | `QuestRequirementType` | required | See enum reference. |
+| `skillId` | `String?` | nullable | `LEVEL_THRESHOLD`: the skill whose level to check (omitted for a character-level check). `ACTIVITY_COUNT`: the skill to count completed activities for (required). |
+| `attributeId` | `String?` | nullable | `LEVEL_THRESHOLD`: the attribute whose level to check (mutually exclusive with `skillId`; both null means character level). |
+| `level` | `Int?` | nullable | `LEVEL_THRESHOLD` target level. |
+| `count` | `Int?` | nullable | `ACTIVITY_COUNT` target count. |
+| `achievementId` | `String?` | nullable | `ACHIEVEMENT`: the achievement that must be unlocked. |
+| `requiredQuestId` | `String?` | nullable | `QUEST_COMPLETED`: a specific other quest that must be completed - not "any quest". |
+| `requiredGoalId` | `String?` | nullable | `GOAL_COMPLETED`: a specific goal that must be completed - not "any goal". |
+
+**Relations:** `quest` (`onDelete: Cascade`), `skill` (optional, `onDelete: Cascade`), `attribute`
+(optional, `onDelete: Cascade`), `achievement` (optional, `onDelete: Cascade`), `requiredQuest`
+(optional, `onDelete: Cascade` — deleting a prerequisite quest removes it as a requirement from
+whatever depended on it, rather than leaving an un-completable dangling reference), `requiredGoal`
+(optional, `onDelete: Cascade`).
+
+**Constraints:** `@@index([questId])`, `@@index([skillId])`, `@@index([attributeId])`,
+`@@index([achievementId])`, `@@index([requiredQuestId])`, `@@index([requiredGoalId])`. Maps to
+table `quest_requirements`.
+
+---
+
+### QuestCompletion
+
+One row per quest completion - not per quest, since a `RECURRING` quest completes many times
+(once per period), each independently claimable. `QuestsService.complete()` creates this row but
+does **not** award XP; a separate claim step (`QuestsService.claimReward`, `POST
+/quests/:id/claim`) does, matching the roadmap's `COMPLETED → REWARD CLAIMED` state. Deliberately
+doesn't snapshot the reward: claiming re-reads the quest's *current* `xpReward`/tagged
+skills/XP Bundle config, the same values `complete()` always read before this model existed -
+editing a quest's reward between completing and claiming it changes what's paid out (see
+`docs/gameplay-systems.md` for the tradeoff).
+
+| Field | Type | Default / Nullable | Notes |
+| --- | --- | --- | --- |
+| `id` | `String` (uuid) | `@default(uuid())`, PK | |
+| `questId` | `String` | required | FK to `Quest`. |
+| `userId` | `String` | required | FK to `User`. |
+| `periodKey` | `String` | required | `"once"` for `ONE_TIME`/`DEADLINE`/`MILESTONE` quests; a day-key (`getDayKey()`) for `RECURRING` quests - same per-period dedup mechanism `HabitCompletion` already uses. |
+| `completedAt` | `DateTime` | `@default(now())` | |
+| `claimedAt` | `DateTime?` | nullable | Null means the reward hasn't been claimed yet. |
+
+**Relations:** `quest` (`onDelete: Cascade`), `user` (`onDelete: Cascade`).
+
+**Constraints:**
+- `@@unique([questId, periodKey])` — the database-level guarantee that a quest can't be completed
+  twice in the same period, mirroring `HabitCompletion`'s own `[habitId, periodKey]` constraint;
+  `QuestsService.complete()` converts a violation into a `409 Conflict`.
+- `@@index([userId])`, `@@index([questId])`
+
+Maps to table `quest_completions`.
 
 ---
 
@@ -427,7 +503,8 @@ achievements are a seed-data change, not a code change.
 | `attributeKey` | `AttributeKey?` | nullable | Used by `ATTRIBUTE_LEVEL_REACHED` to target one of the 8 fixed attributes. |
 | `createdAt` | `DateTime` | `@default(now())` | |
 
-**Relations:** `userAchievements[]` (per-user unlock records).
+**Relations:** `userAchievements[]` (per-user unlock records), `questRequirements[]`
+(`QuestRequirement[]` with an `ACHIEVEMENT` requirement pointing at this achievement).
 
 **Constraints:** none beyond `key` uniqueness (used as the upsert key in `seed.ts`). Maps to
 table `achievements`.
@@ -552,9 +629,22 @@ independently rather than derived from `difficulty`.)
 
 | Value | Meaning |
 | --- | --- |
-| `ACTIVE` | Quest is open and available to complete (the schema default). |
-| `COMPLETED` | Quest has been completed (for `ONE_TIME` quests, terminal). |
+| `ACTIVE` | Quest exists and hasn't been completed/archived (the schema default). Does **not** by itself mean completable - a quest with unmet `QuestRequirement`s is still `ACTIVE` but locked; see `QuestRequirementType` below and `docs/gameplay-systems.md`. |
+| `COMPLETED` | Quest has been completed (for `ONE_TIME` quests, terminal). Independent of whether its reward has been claimed - see `QuestCompletion`. |
 | `ARCHIVED` | Quest has been archived/hidden without being marked completed. |
+
+### QuestRequirementType
+
+A quest's prerequisites ("level-gated quests") - see the `QuestRequirement` model above for which
+fields each type uses.
+
+| Value | Meaning |
+| --- | --- |
+| `LEVEL_THRESHOLD` | The character, a specific skill, or a specific attribute must reach a given level. |
+| `ACTIVITY_COUNT` | A specific skill must have been used in a given number of completed activities. |
+| `ACHIEVEMENT` | A specific achievement must be unlocked. |
+| `QUEST_COMPLETED` | A specific other quest must be completed. |
+| `GOAL_COMPLETED` | A specific goal must be completed. |
 
 ### HabitFrequency
 

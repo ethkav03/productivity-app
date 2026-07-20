@@ -15,6 +15,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { AttributeBonusDto, SkillRewardOverrideDto } from '../../common/dto/activity-reward.dto';
+import { QuestRequirementDto } from '../../common/dto/quest-requirement.dto';
 
 export class CreateQuestDto {
   @ApiProperty()
@@ -80,4 +81,14 @@ export class CreateQuestDto {
   @IsOptional()
   @IsISO8601()
   deadline?: string;
+
+  @ApiPropertyOptional({
+    type: [QuestRequirementDto],
+    description: 'Prerequisites this quest is locked behind until satisfied ("level-gated quests"). Omit for an always-available quest.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => QuestRequirementDto)
+  requirements?: QuestRequirementDto[];
 }

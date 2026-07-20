@@ -8,6 +8,7 @@ import {
 import { Prisma, QuestStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProgressionService } from '../progression/progression.service';
+import { CompletionResult } from '../progression/progression.types';
 import { SkillsService } from '../skills/skills.service';
 import { AttributesService } from '../attributes/attributes.service';
 import { getDayKey } from '../common/period';
@@ -15,22 +16,38 @@ import { DIFFICULTY_XP } from '../common/leveling';
 import { CreateQuestDto } from './dto/create-quest.dto';
 import { UpdateQuestDto } from './dto/update-quest.dto';
 import { AttributeBonusDto, SkillRewardOverrideDto } from '../common/dto/activity-reward.dto';
+import { QuestRequirementDto } from '../common/dto/quest-requirement.dto';
+import { buildRequirementSnapshot, evaluateRequirements } from './quest-requirements';
+
+const requirementInclude = {
+  skill: { select: { name: true } },
+  attribute: { select: { name: true } },
+  achievement: { select: { name: true } },
+  requiredQuest: { select: { title: true } },
+  requiredGoal: { select: { title: true } },
+} satisfies Prisma.QuestRequirementInclude;
 
 const questInclude = {
   questSkills: { include: { skill: { include: { attribute: true } } } },
   attributeBonuses: { include: { attribute: { select: { id: true, key: true, name: true } } } },
   goal: { select: { id: true, title: true } },
+  requirements: { include: requirementInclude },
+  // Only the count matters for serialization - claim() re-fetches full rows itself.
+  completions: { where: { claimedAt: null }, select: { id: true } },
 } satisfies Prisma.QuestInclude;
 
 type QuestWithRelations = Prisma.QuestGetPayload<{ include: typeof questInclude }>;
+type RequirementSnapshot = Awaited<ReturnType<typeof buildRequirementSnapshot>>;
 
-function serializeQuest(quest: QuestWithRelations) {
-  const { questSkills, attributeBonuses, goal, ...rest } = quest;
+function serializeQuest(quest: QuestWithRelations, snapshot: RequirementSnapshot) {
+  const { questSkills, attributeBonuses, goal, requirements, completions, ...rest } = quest;
 
   const completedToday =
     rest.type === 'RECURRING'
       ? !!rest.lastCompletedAt && getDayKey(rest.lastCompletedAt) === getDayKey()
       : rest.status === 'COMPLETED';
+
+  const { requirements: evaluatedRequirements, isLocked } = evaluateRequirements(requirements, snapshot);
 
   return {
     ...rest,
@@ -45,6 +62,14 @@ function serializeQuest(quest: QuestWithRelations) {
     })),
     goal: goal ?? null,
     completedToday,
+    // "Level-gated quests": a locked quest is never hidden - it's shown with
+    // its requirements and how close each one is to being met.
+    isLocked,
+    requirements: evaluatedRequirements,
+    // "Reward claiming": completions that happened but haven't had their XP
+    // claimed yet - the frontend shows "Claim Reward" instead of "Complete"
+    // when this is > 0.
+    unclaimedCompletions: completions.length,
   };
 }
 
@@ -81,25 +106,102 @@ export class QuestsService {
     }
   }
 
-  async findAll(userId: string, filters: { status?: QuestStatus; goalId?: string }) {
-    const quests = await this.prisma.quest.findMany({
-      where: {
-        userId,
-        ...(filters.status && { status: filters.status }),
-        ...(filters.goalId && { goalId: filters.goalId }),
-      },
-      include: questInclude,
-      orderBy: { createdAt: 'desc' },
-    });
+  /**
+   * "Level-gated quests": validates each requirement's shape (which fields
+   * are needed depends on `type`) and ownership of whatever it references.
+   * `currentQuestId` (only set on update, since a quest can't reference
+   * itself before it exists) guards against a requirement making a quest
+   * require its own completion.
+   */
+  private async validateRequirements(
+    userId: string,
+    requirements: QuestRequirementDto[] | undefined,
+    currentQuestId?: string,
+  ): Promise<void> {
+    if (!requirements?.length) return;
 
-    return quests.map(serializeQuest);
+    for (const requirement of requirements) {
+      switch (requirement.type) {
+        case 'LEVEL_THRESHOLD': {
+          if (requirement.skillId && requirement.attributeId) {
+            throw new BadRequestException('A LEVEL_THRESHOLD requirement can target a skill or an attribute, not both');
+          }
+          if (requirement.level === undefined) {
+            throw new BadRequestException('LEVEL_THRESHOLD requirements need a level');
+          }
+          if (requirement.skillId) {
+            // eslint-disable-next-line no-await-in-loop
+            await this.skillsService.assertOwnedSkillIds(userId, [requirement.skillId]);
+          }
+          if (requirement.attributeId) {
+            // eslint-disable-next-line no-await-in-loop
+            await this.attributesService.assertOwnedAttributeIds(userId, [requirement.attributeId]);
+          }
+          break;
+        }
+        case 'ACTIVITY_COUNT': {
+          if (!requirement.skillId || requirement.count === undefined) {
+            throw new BadRequestException('ACTIVITY_COUNT requirements need a skillId and a count');
+          }
+          // eslint-disable-next-line no-await-in-loop
+          await this.skillsService.assertOwnedSkillIds(userId, [requirement.skillId]);
+          break;
+        }
+        case 'ACHIEVEMENT': {
+          if (!requirement.achievementId) {
+            throw new BadRequestException('ACHIEVEMENT requirements need an achievementId');
+          }
+          // eslint-disable-next-line no-await-in-loop
+          const achievement = await this.prisma.achievement.findUnique({ where: { id: requirement.achievementId } });
+          if (!achievement) throw new NotFoundException('Achievement not found');
+          break;
+        }
+        case 'QUEST_COMPLETED': {
+          if (!requirement.requiredQuestId) {
+            throw new BadRequestException('QUEST_COMPLETED requirements need a requiredQuestId');
+          }
+          if (currentQuestId && requirement.requiredQuestId === currentQuestId) {
+            throw new BadRequestException('A quest cannot require itself');
+          }
+          // eslint-disable-next-line no-await-in-loop
+          await this.getOwnedQuest(userId, requirement.requiredQuestId);
+          break;
+        }
+        case 'GOAL_COMPLETED': {
+          if (!requirement.requiredGoalId) {
+            throw new BadRequestException('GOAL_COMPLETED requirements need a requiredGoalId');
+          }
+          // eslint-disable-next-line no-await-in-loop
+          await this.assertOwnedGoal(userId, requirement.requiredGoalId);
+          break;
+        }
+      }
+    }
+  }
+
+  async findAll(userId: string, filters: { status?: QuestStatus; goalId?: string }) {
+    const [quests, snapshot] = await Promise.all([
+      this.prisma.quest.findMany({
+        where: {
+          userId,
+          ...(filters.status && { status: filters.status }),
+          ...(filters.goalId && { goalId: filters.goalId }),
+        },
+        include: questInclude,
+        orderBy: { createdAt: 'desc' },
+      }),
+      buildRequirementSnapshot(this.prisma, userId),
+    ]);
+
+    return quests.map((quest) => serializeQuest(quest, snapshot));
   }
 
   async findOne(userId: string, id: string) {
     const quest = await this.prisma.quest.findUnique({ where: { id }, include: questInclude });
     if (!quest) throw new NotFoundException('Quest not found');
     if (quest.userId !== userId) throw new ForbiddenException();
-    return serializeQuest(quest);
+    const snapshot = await buildRequirementSnapshot(this.prisma, userId);
+    return serializeQuest(quest, snapshot);
   }
 
   async create(userId: string, dto: CreateQuestDto) {
@@ -110,6 +212,7 @@ export class QuestsService {
       await this.skillsService.assertOwnedSkillIds(userId, dto.skillIds);
     }
     await this.validateRewardBundle(userId, dto.skillIds, dto.skillRewardOverrides, dto.attributeBonuses);
+    await this.validateRequirements(userId, dto.requirements);
 
     const difficulty = dto.difficulty ?? 'MEDIUM';
     const type = dto.type ?? 'ONE_TIME';
@@ -132,11 +235,24 @@ export class QuestsService {
         attributeBonuses: {
           create: (dto.attributeBonuses ?? []).map((bonus) => ({ attributeId: bonus.attributeId, amount: bonus.amount })),
         },
+        requirements: {
+          create: (dto.requirements ?? []).map((requirement) => ({
+            type: requirement.type,
+            skillId: requirement.skillId,
+            attributeId: requirement.attributeId,
+            level: requirement.level,
+            count: requirement.count,
+            achievementId: requirement.achievementId,
+            requiredQuestId: requirement.requiredQuestId,
+            requiredGoalId: requirement.requiredGoalId,
+          })),
+        },
       },
       include: questInclude,
     });
 
-    return serializeQuest(quest);
+    const snapshot = await buildRequirementSnapshot(this.prisma, userId);
+    return serializeQuest(quest, snapshot);
   }
 
   async update(userId: string, id: string, dto: UpdateQuestDto) {
@@ -155,6 +271,9 @@ export class QuestsService {
       // the ones being set now, or (if skillIds isn't part of this update) the quest's current tags.
       const currentSkillIds = effectiveSkillIds ?? (await this.prisma.questSkill.findMany({ where: { questId: id }, select: { skillId: true } })).map((qs) => qs.skillId);
       await this.validateRewardBundle(userId, currentSkillIds, dto.skillRewardOverrides, dto.attributeBonuses);
+    }
+    if (dto.requirements) {
+      await this.validateRequirements(userId, dto.requirements, id);
     }
 
     if (dto.skillIds) {
@@ -186,18 +305,36 @@ export class QuestsService {
       ]);
     }
 
-    const { skillIds, skillRewardOverrides, attributeBonuses, deadline, ...scalarFields } = dto;
+    if (dto.requirements) {
+      await this.prisma.$transaction([
+        this.prisma.questRequirement.deleteMany({ where: { questId: id } }),
+        this.prisma.questRequirement.createMany({
+          data: dto.requirements.map((requirement) => ({
+            questId: id,
+            type: requirement.type,
+            skillId: requirement.skillId,
+            attributeId: requirement.attributeId,
+            level: requirement.level,
+            count: requirement.count,
+            achievementId: requirement.achievementId,
+            requiredQuestId: requirement.requiredQuestId,
+            requiredGoalId: requirement.requiredGoalId,
+          })),
+        }),
+      ]);
+    }
 
-    const quest = await this.prisma.quest.update({
+    const { skillIds, skillRewardOverrides, attributeBonuses, requirements, deadline, ...scalarFields } = dto;
+
+    await this.prisma.quest.update({
       where: { id },
       data: {
         ...scalarFields,
         ...(deadline !== undefined && { deadline: deadline ? new Date(deadline) : null }),
       },
-      include: questInclude,
     });
 
-    return serializeQuest(quest);
+    return this.findOne(userId, id);
   }
 
   async remove(userId: string, id: string) {
@@ -206,46 +343,100 @@ export class QuestsService {
     return { id, deleted: true };
   }
 
+  /**
+   * Marks a completion - creates a QuestCompletion row keyed by period
+   * ("once" for non-recurring quests; a day-key for recurring ones, reusing
+   * the same dedup mechanism HabitCompletion already uses) - but does NOT
+   * award XP. See claimReward() for the actual reward grant ("reward
+   * claiming" - completing and claiming are deliberately separate steps).
+   */
   async complete(userId: string, id: string) {
-    const quest = await this.prisma.quest.findUnique({
-      where: { id },
-      include: { questSkills: true, attributeBonuses: true },
-    });
+    const quest = await this.prisma.quest.findUnique({ where: { id } });
     if (!quest) throw new NotFoundException('Quest not found');
     if (quest.userId !== userId) throw new ForbiddenException();
     if (quest.status === 'ARCHIVED') {
       throw new BadRequestException('Cannot complete an archived quest');
     }
 
-    const today = getDayKey();
-
-    if (quest.type === 'RECURRING') {
-      if (quest.lastCompletedAt && getDayKey(quest.lastCompletedAt) === today) {
-        throw new ConflictException('Quest already completed today');
+    const requirementRows = await this.prisma.questRequirement.findMany({
+      where: { questId: id },
+      include: requirementInclude,
+    });
+    if (requirementRows.length > 0) {
+      const snapshot = await buildRequirementSnapshot(this.prisma, userId);
+      const { isLocked } = evaluateRequirements(requirementRows, snapshot);
+      if (isLocked) {
+        throw new BadRequestException('Quest is locked - requirements not yet met');
       }
-      await this.prisma.quest.update({
-        where: { id },
-        data: { lastCompletedAt: new Date() },
-      });
-    } else {
-      if (quest.status === 'COMPLETED') {
-        throw new ConflictException('Quest already completed');
-      }
-      await this.prisma.quest.update({
-        where: { id },
-        data: { status: 'COMPLETED', completedAt: new Date() },
-      });
     }
 
-    return this.progressionService.completeActivity({
-      userId,
-      amount: quest.xpReward,
-      sourceType: 'QUEST_COMPLETION',
-      sourceId: quest.id,
-      sourceName: quest.title,
-      skillAwards: quest.questSkills.map((qs) => ({ skillId: qs.skillId, amount: qs.amount ?? undefined })),
-      attributeBonuses: quest.attributeBonuses.map((bonus) => ({ attributeId: bonus.attributeId, amount: bonus.amount })),
+    const periodKey = quest.type === 'RECURRING' ? getDayKey() : 'once';
+
+    let completion;
+    try {
+      const [completionRow] = await this.prisma.$transaction([
+        this.prisma.questCompletion.create({ data: { questId: id, userId, periodKey } }),
+        quest.type === 'RECURRING'
+          ? this.prisma.quest.update({ where: { id }, data: { lastCompletedAt: new Date() } })
+          : this.prisma.quest.update({ where: { id }, data: { status: 'COMPLETED', completedAt: new Date() } }),
+      ]);
+      completion = completionRow;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException(quest.type === 'RECURRING' ? 'Quest already completed today' : 'Quest already completed');
+      }
+      throw error;
+    }
+
+    const updatedQuest = await this.findOne(userId, id);
+    return { quest: updatedQuest, completion };
+  }
+
+  /**
+   * Claims every not-yet-claimed completion for this quest (there can be
+   * more than one for a recurring quest the user hasn't opened the app to
+   * claim in a few days), awarding XP once per completion so the ledger
+   * keeps one event per actual completion rather than summing them.
+   * Deliberately re-reads the quest's *current* reward config rather than a
+   * snapshot from completion time - see QuestCompletion's doc comment.
+   */
+  async claimReward(userId: string, id: string): Promise<CompletionResult[]> {
+    const quest = await this.prisma.quest.findUnique({
+      where: { id },
+      include: { questSkills: true, attributeBonuses: true },
     });
+    if (!quest) throw new NotFoundException('Quest not found');
+    if (quest.userId !== userId) throw new ForbiddenException();
+
+    const pending = await this.prisma.questCompletion.findMany({
+      where: { questId: id, userId, claimedAt: null },
+      orderBy: { completedAt: 'asc' },
+    });
+    if (pending.length === 0) {
+      throw new ConflictException('No pending reward to claim for this quest');
+    }
+
+    const skillAwards = quest.questSkills.map((qs) => ({ skillId: qs.skillId, amount: qs.amount ?? undefined }));
+    const attributeBonuses = quest.attributeBonuses.map((bonus) => ({ attributeId: bonus.attributeId, amount: bonus.amount }));
+
+    const results: CompletionResult[] = [];
+    for (const completionRow of pending) {
+      // eslint-disable-next-line no-await-in-loop
+      const result = await this.progressionService.completeActivity({
+        userId,
+        amount: quest.xpReward,
+        sourceType: 'QUEST_COMPLETION',
+        sourceId: quest.id,
+        sourceName: quest.title,
+        skillAwards,
+        attributeBonuses,
+      });
+      // eslint-disable-next-line no-await-in-loop
+      await this.prisma.questCompletion.update({ where: { id: completionRow.id }, data: { claimedAt: new Date() } });
+      results.push(result);
+    }
+
+    return results;
   }
 
   private async assertOwnedGoal(userId: string, goalId: string): Promise<void> {

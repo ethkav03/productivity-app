@@ -17,7 +17,7 @@ import { CheckCircle2, Circle, Flame, Sparkles, Trophy } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useCelebration } from '@/hooks/use-celebration';
 import { completeHabit, getHabits } from '@/lib/api/habits';
-import { completeQuest, getQuests } from '@/lib/api/quests';
+import { claimQuestReward, completeQuest, getQuests } from '@/lib/api/quests';
 import { getGoals } from '@/lib/api/goals';
 import { getUnlockedAchievements } from '@/lib/api/achievements';
 import { getAnalyticsAttributes, getAnalyticsFeed } from '@/lib/api/analytics';
@@ -73,7 +73,22 @@ export default function DashboardPage() {
 
   const completeQuestMutation = useMutation({
     mutationFn: completeQuest,
-    onSuccess: handleCompletionSuccess,
+    onSuccess: () => {
+      // Completing alone doesn't award XP - "Claim Reward" does (see below) -
+      // so just refetch to flip the row's button, nothing to celebrate yet.
+      queryClient.invalidateQueries({ queryKey: ['quests'] });
+    },
+  });
+
+  const claimQuestMutation = useMutation({
+    mutationFn: claimQuestReward,
+    onSuccess: async (results) => {
+      queryClient.invalidateQueries({ queryKey: ['quests'] });
+      queryClient.invalidateQueries({ queryKey: ['achievements'] });
+      queryClient.invalidateQueries({ queryKey: ['analytics'] });
+      await refreshUser();
+      results.forEach((result) => celebrate(result));
+    },
   });
 
   // Only block the whole page on the two primary "what's on deck" queries; slower
@@ -196,6 +211,8 @@ export default function DashboardPage() {
                     quest={quest}
                     pending={completeQuestMutation.isPending && completeQuestMutation.variables === quest.id}
                     onComplete={() => completeQuestMutation.mutate(quest.id)}
+                    claiming={claimQuestMutation.isPending && claimQuestMutation.variables === quest.id}
+                    onClaim={() => claimQuestMutation.mutate(quest.id)}
                   />
                 ))}
               </ul>
@@ -424,14 +441,19 @@ function QuestRow({
   quest,
   pending,
   onComplete,
+  claiming,
+  onClaim,
 }: {
   quest: Quest;
   pending: boolean;
   onComplete: () => void;
+  claiming: boolean;
+  onClaim: () => void;
 }) {
   // Only RECURRING quests can be ACTIVE and already completedToday; other quest types
   // transition straight to COMPLETED status and drop out of the ACTIVE list entirely.
   const completedToday = quest.type === 'RECURRING' && !!quest.completedToday;
+  const hasPendingReward = quest.unclaimedCompletions > 0;
 
   return (
     <li className="flex items-center justify-between gap-3 rounded-xl border border-border p-3">
@@ -445,7 +467,15 @@ function QuestRow({
           <AttributeDots skills={quest.skills} />
         </div>
       </div>
-      {completedToday ? (
+      {hasPendingReward ? (
+        <Button size="sm" variant="outline" loading={claiming} onClick={onClaim} className="shrink-0">
+          Claim Reward
+        </Button>
+      ) : quest.isLocked ? (
+        <Button variant="secondary" size="sm" disabled className="shrink-0">
+          Locked
+        </Button>
+      ) : completedToday ? (
         <Button variant="secondary" size="sm" disabled className="shrink-0">
           Completed today
         </Button>

@@ -361,7 +361,9 @@ Tracked here as work proceeds; see `docs/changelog.md` for the dated narrative o
 
 **Chosen entry point:** Sprint 1 (Progression Foundation) - the user chose this over the
 feature-first "Immediate MVP Expansion" path when asked, so foundation work landed before any
-Phase 1+ feature.
+Phase 1+ feature. Sprint 1 is complete; Sprint 2 (Quest Progression) is in progress, built one
+roadmap Feature per git branch (`feature/level-gated-quests`, `feature/quest-board`,
+`feature/daily-weekly-challenges`), each merged into `main` when done and verified.
 
 | Item | Status |
 | --- | --- |
@@ -370,7 +372,14 @@ Phase 1+ feature.
 | 5 — XP History | **Done.** `GET /analytics/xp-history` + `/analytics/history` page. Graph/daily-weekly-monthly breakdowns from the roadmap's "should eventually support" list are not built - the existing `/analytics` XP-over-time chart already covers that need. |
 | 0.3 — XP Bundles | **Done.** Per-skill XP overrides (`QuestSkill`/`HabitSkill`/`GoalSkill.amount`) and attribute-only bonus XP (`ActivityAttributeBonus`), wired into all three creation modals via a shared `RewardBundleEditor`. See `gameplay-systems.md` § "XP Bundles: per-skill overrides and attribute-only bonuses". |
 | 0.1 — Internal domain events | **Done.** `ActivityCompletedEvent` + `EventEmitter2` (`@nestjs/event-emitter`), emitted once per `ProgressionService.completeActivity` call; one listener (`LevelUpNotificationListener`) so far. See `gameplay-systems.md` § "Internal domain events (Feature 0.1)". This was Sprint 1's last item - see `docs/changelog.md` for the closing entry. |
-| Everything in Phases 1-4 | Not yet built - out of scope for Sprint 1. |
+| 1 — Level-Gated Quests | **Done** (`feature/level-gated-quests`). `QuestRequirement` (5 types) + computed `isLocked`/`requirements` on every serialized quest - locked quests are never hidden. Reward claiming (`QuestCompletion`, `POST /quests/:id/claim`) also landed as part of this branch. See `gameplay-systems.md` § "Level-gated quests and reward claiming (Feature 1)". |
+| 2 — Quest Board | Not yet built. |
+| 3 — Daily and Weekly Challenges | Not yet built. |
+| 4 — XP Balancing and Diminishing Returns | Not yet built - not part of Sprint 2's scope (roadmap's own sprint grouping puts it under "Quest Progression" but it wasn't selected for this pass). |
+| 6 — Level-Up Rewards | Not yet built - Sprint 3 ("Meaningful Progression"). |
+| 7 — Skill and Attribute Detail Pages | Partially exists already (`/skills/[id]` has level/progress/XP/recent-activity; no "what contributes to this skill?" breakdown or unlocked-perks section yet) - full Feature 7 scope deferred to Sprint 3. |
+| 8 — Intelligent Goal Decomposition | Not yet built - Sprint 4 ("Better Goals"). |
+| Everything in Phases 2-4 | Not yet built - out of scope for Sprint 2. |
 
 **Deliberate deviation:** `eventId` was added as a real schema column (not in the original
 Feature 0.2 sketch, which implied `targetType`/`targetId`/`sourceType`/`sourceId` would be
@@ -403,3 +412,14 @@ The event system's actual payoff is for *new*, response-independent concerns (ch
 seasons, AI analysis, a timeline view) to subscribe later without touching
 `ProgressionService`/Quests/Habits/Goals at all - not retrofitting today's four branches onto it
 unconditionally.
+
+**Deliberate deviation:** Feature 1's proposed state machine is `LOCKED → AVAILABLE → ACTIVE →
+COMPLETED → REWARD CLAIMED`, plus `FAILED`/`EXPIRED`. The actual implementation doesn't add any of
+this to `QuestStatus` (still just `ACTIVE`/`COMPLETED`/`ARCHIVED`, unchanged since before this
+feature). `LOCKED`/`AVAILABLE` are computed at read time (`isLocked: boolean`) rather than stored,
+since a quest's requirements can become newly met or newly unmet as the user's stats change -
+storing it would mean re-deriving and writing it on every relevant stat change instead of just
+reading it fresh, for no benefit. `REWARD CLAIMED` is represented by `QuestCompletion.claimedAt`
+rather than a new status value, since a `RECURRING` quest needs *per-completion* claim state, not
+one flag on the quest itself. `FAILED`/`EXPIRED` aren't implemented at all - out of scope for this
+slice; nothing today automatically fails or expires a quest.

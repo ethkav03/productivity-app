@@ -4,6 +4,54 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-20 — Level-gated quests and reward claiming
+
+First slice of "Sprint 2: Quest Progression" (`docs/feature-roadmap.md`) - Phase 1 Feature 1.
+Also the first feature built on its own git branch (`feature/level-gated-quests`, merged into a
+newly-renamed `main`) rather than committed straight to the trunk branch, per a new standing
+working agreement: one branch per roadmap Feature from now on.
+
+Added `QuestRequirement` (migration `20260720170000_level_gated_quests`): a quest can be locked
+behind zero or more prerequisites - a level threshold (character, skill, or attribute), an
+activity count for a specific skill, a specific achievement, a specific other quest, or a specific
+goal. Locked/unlocked is computed at read time (`isLocked`/`requirements` on every serialized
+quest), not stored - a locked quest is never hidden, it's shown with a requirement checklist and
+progress toward each one. New `backend/src/quests/quest-requirements.ts` batches one
+`buildRequirementSnapshot` query per list/detail request (not per quest) to avoid N+1 queries,
+following the same data-driven-condition pattern `AchievementsService.isConditionMet` already
+established.
+
+Also added reward claiming: completing a quest (`POST /quests/:id/complete`) no longer awards XP
+immediately - a new `POST /quests/:id/claim` does, via a new `QuestCompletion` model (one row per
+completion, since a `RECURRING` quest can accumulate more than one unclaimed completion).
+Deliberately doesn't snapshot the reward at completion time - claiming re-reads the quest's
+current `xpReward`/tagged skills/bundle config, same as `complete()` always did. Scoped to quests
+only; habits and goals keep their existing instant-reward flow. This changed `QuestsService.complete`'s
+duplicate-completion guard from an application-level `status`/`lastCompletedAt` read-then-write
+check to a database unique constraint (`QuestCompletion @@unique([questId, periodKey])`), the same
+mechanism `HabitCompletion` already used - closing a pre-existing (if narrow) race-condition gap
+between quests' old guard and habits'.
+
+Frontend: new `RequirementsEditor` component (`frontend/src/components/ui/requirements-editor.tsx`),
+a collapsed-by-default "Prerequisites" disclosure in the create-quest modal, mirroring
+`RewardBundleEditor`'s pattern. Quest cards render dimmed with a requirement checklist when locked
+(mirroring `/achievements`' existing locked-achievement treatment), and swap their button to
+"Claim Reward" once a completion is pending - `useCelebration()` now fires on a successful claim,
+not on `complete()`, since no XP moves until then.
+
+While building the requirements editor's layout, found and fixed a real (if narrow) CSS bug: the
+shared `Select`/`Input` components bake `w-full` into their base classes, which competes with a
+sibling-sizing override (`flex-1`/`w-24`) applied to the *same* element at equal CSS specificity -
+the outcome depends on Tailwind's dev-mode class-discovery order, not JSX class order, so it's
+silently non-deterministic across recompiles. Fixed by moving the sizing to wrapper `div`s instead
+of the form elements themselves, so there's no longer a competing `width` utility on one element.
+
+Verified via a real-API script (locked → complete rejected with 400 → level up → unlocked →
+complete → claim → XP moves; `ACTIVITY_COUNT` progress tracking; `QUEST_COMPLETED` prerequisites
+including a self-reference rejection; a `RECURRING` quest's independently-claimable completions)
+and a Playwright browser pass (light + dark) covering the locked card, the complete → claim →
+celebration flow, and the requirements editor.
+
 ## 2026-07-20 — Fix: navigating to Settings flashed the whole app to light mode
 
 `useTheme` (`frontend/src/hooks/use-theme.ts`) is consumed by `ThemeToggle`, which only lives on

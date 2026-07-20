@@ -6,15 +6,16 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { CalendarClock, CheckSquare, Plus, Target } from 'lucide-react';
+import { CalendarClock, CheckSquare, Gift, Lock, Plus, Target } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useCelebration } from '@/hooks/use-celebration';
 import { getApiErrorMessage } from '@/lib/api-client';
-import { completeQuest, createQuest, getQuests } from '@/lib/api/quests';
+import { claimQuestReward, completeQuest, createQuest, getQuests } from '@/lib/api/quests';
 import { getGoals } from '@/lib/api/goals';
 import { getSkills } from '@/lib/api/skills';
 import { getAttributes } from '@/lib/api/attributes';
-import { Quest, QuestDifficulty, QuestType } from '@/lib/types';
+import { getAchievements } from '@/lib/api/achievements';
+import { Quest, QuestDifficulty, QuestRequirementInput, QuestType } from '@/lib/types';
 import { AttributeDots } from '@/components/ui/attribute-dots';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -24,10 +25,12 @@ import { FieldError, Input, Label, Select, Textarea } from '@/components/ui/inpu
 import { Modal } from '@/components/ui/modal';
 import { PillSelect } from '@/components/ui/pill-select';
 import { RewardBundleEditor, RewardBundleValue } from '@/components/ui/reward-bundle-editor';
+import { RequirementsEditor } from '@/components/ui/requirements-editor';
 import { PageSpinner, Spinner } from '@/components/ui/spinner';
 import { useToast } from '@/components/ui/toaster';
 
 const EMPTY_REWARD_BUNDLE: RewardBundleValue = { skillRewardOverrides: [], attributeBonuses: [] };
+const EMPTY_REQUIREMENTS: QuestRequirementInput[] = [];
 
 type QuestStatusTab = 'ACTIVE' | 'COMPLETED';
 
@@ -97,15 +100,28 @@ export default function QuestsPage() {
 
   const completeMutation = useMutation({
     mutationFn: completeQuest,
-    onSuccess: async (result) => {
+    onSuccess: () => {
+      // No XP moves yet on complete() alone - "Claim Reward" is the step
+      // that actually awards it (see claimMutation), so there's nothing to
+      // celebrate here, just a refetch to flip the button to "Claim Reward".
+      queryClient.invalidateQueries({ queryKey: ['quests'] });
+    },
+    onError: (error) => {
+      push({ variant: 'default', title: 'Could not complete quest', description: getApiErrorMessage(error) });
+    },
+  });
+
+  const claimMutation = useMutation({
+    mutationFn: claimQuestReward,
+    onSuccess: async (results) => {
       queryClient.invalidateQueries({ queryKey: ['quests'] });
       queryClient.invalidateQueries({ queryKey: ['achievements'] });
       queryClient.invalidateQueries({ queryKey: ['analytics'] });
       await refreshUser();
-      celebrate(result);
+      results.forEach((result) => celebrate(result));
     },
     onError: (error) => {
-      push({ variant: 'default', title: 'Could not complete quest', description: getApiErrorMessage(error) });
+      push({ variant: 'default', title: 'Could not claim reward', description: getApiErrorMessage(error) });
     },
   });
 
@@ -173,6 +189,8 @@ export default function QuestsPage() {
               status={status}
               onComplete={() => completeMutation.mutate(quest.id)}
               isCompleting={completeMutation.isPending && completeMutation.variables === quest.id}
+              onClaim={() => claimMutation.mutate(quest.id)}
+              isClaiming={claimMutation.isPending && claimMutation.variables === quest.id}
             />
           ))}
         </div>
@@ -188,15 +206,21 @@ interface QuestCardProps {
   status: QuestStatusTab;
   onComplete: () => void;
   isCompleting: boolean;
+  onClaim: () => void;
+  isClaiming: boolean;
 }
 
-function QuestCard({ quest, status, onComplete, isCompleting }: QuestCardProps) {
+function QuestCard({ quest, status, onComplete, isCompleting, onClaim, isClaiming }: QuestCardProps) {
   const recurringCompletedToday = quest.type === 'RECURRING' && quest.completedToday === true;
+  const hasPendingReward = quest.unclaimedCompletions > 0;
 
   return (
-    <Card>
+    <Card className={quest.isLocked ? 'opacity-70 grayscale' : undefined}>
       <CardHeader>
-        <CardTitle>{quest.title}</CardTitle>
+        <CardTitle className="flex items-center gap-1.5">
+          {quest.isLocked && <Lock className="h-3.5 w-3.5 text-muted" />}
+          {quest.title}
+        </CardTitle>
         <Badge variant={DIFFICULTY_BADGE_VARIANT[quest.difficulty]}>{DIFFICULTY_LABELS[quest.difficulty]}</Badge>
       </CardHeader>
 
@@ -220,8 +244,33 @@ function QuestCard({ quest, status, onComplete, isCompleting }: QuestCardProps) 
         </p>
       )}
 
-      {status === 'ACTIVE' &&
-        (recurringCompletedToday ? (
+      {quest.requirements.length > 0 && (
+        <ul className="mb-3 space-y-1 text-xs">
+          {quest.requirements.map((requirement, index) => (
+            <li key={index} className={requirement.met ? 'text-success' : 'text-muted'}>
+              {requirement.met ? '✓' : '✗'} {requirement.description}
+              {requirement.progress && !requirement.met && (
+                <span className="ml-1 text-muted">
+                  ({requirement.progress.current}/{requirement.progress.target})
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {hasPendingReward ? (
+        <Button size="sm" className="w-full" onClick={onClaim} loading={isClaiming}>
+          <Gift className="h-4 w-4" />
+          Claim Reward
+        </Button>
+      ) : (
+        status === 'ACTIVE' &&
+        (quest.isLocked ? (
+          <Button variant="secondary" size="sm" disabled className="w-full">
+            Locked
+          </Button>
+        ) : recurringCompletedToday ? (
           <Button variant="secondary" size="sm" disabled className="w-full">
             Completed today
           </Button>
@@ -229,7 +278,8 @@ function QuestCard({ quest, status, onComplete, isCompleting }: QuestCardProps) 
           <Button size="sm" className="w-full" onClick={onComplete} loading={isCompleting}>
             Complete
           </Button>
-        ))}
+        ))
+      )}
     </Card>
   );
 }
@@ -256,7 +306,20 @@ function CreateQuestModal({ open, onClose }: { open: boolean; onClose: () => voi
     enabled: open,
   });
 
+  const achievementsQuery = useQuery({
+    queryKey: ['achievements'],
+    queryFn: getAchievements,
+    enabled: open,
+  });
+
+  const questsQuery = useQuery({
+    queryKey: ['quests', 'all'],
+    queryFn: () => getQuests(),
+    enabled: open,
+  });
+
   const [rewardBundle, setRewardBundle] = useState<RewardBundleValue>(EMPTY_REWARD_BUNDLE);
+  const [requirements, setRequirements] = useState<QuestRequirementInput[]>(EMPTY_REQUIREMENTS);
 
   const {
     register,
@@ -288,6 +351,7 @@ function CreateQuestModal({ open, onClose }: { open: boolean; onClose: () => voi
       queryClient.invalidateQueries({ queryKey: ['quests'] });
       reset();
       setRewardBundle(EMPTY_REWARD_BUNDLE);
+      setRequirements(EMPTY_REQUIREMENTS);
       onClose();
     },
     onError: (error) => {
@@ -308,6 +372,7 @@ function CreateQuestModal({ open, onClose }: { open: boolean; onClose: () => voi
   function handleClose() {
     reset();
     setRewardBundle(EMPTY_REWARD_BUNDLE);
+    setRequirements(EMPTY_REQUIREMENTS);
     onClose();
   }
 
@@ -325,6 +390,7 @@ function CreateQuestModal({ open, onClose }: { open: boolean; onClose: () => voi
       skillRewardOverrides: skillRewardOverrides.length ? skillRewardOverrides : undefined,
       attributeBonuses: rewardBundle.attributeBonuses.length ? rewardBundle.attributeBonuses : undefined,
       deadline: values.type === 'DEADLINE' && values.deadline ? new Date(values.deadline).toISOString() : undefined,
+      requirements: requirements.length ? requirements : undefined,
     });
   }
 
@@ -410,6 +476,16 @@ function CreateQuestModal({ open, onClose }: { open: boolean; onClose: () => voi
           flatXpReward={DIFFICULTY_XP[watchedDifficulty]}
           value={rewardBundle}
           onChange={setRewardBundle}
+        />
+
+        <RequirementsEditor
+          skills={skillsQuery.data ?? []}
+          attributes={attributesQuery.data ?? []}
+          achievements={achievementsQuery.data ?? []}
+          quests={questsQuery.data ?? []}
+          goals={goalsQuery.data ?? []}
+          value={requirements}
+          onChange={setRequirements}
         />
 
         <div className="flex justify-end gap-2 pt-2">

@@ -56,6 +56,12 @@ export class QuestsController {
     return this.questsService.complete(user.userId, id);
   }
 
+  @Post(':id/claim')
+  @HttpCode(HttpStatus.OK)
+  claimReward(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.questsService.claimReward(user.userId, id);
+  }
+
   @Delete(':id')
   remove(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
     return this.questsService.remove(user.userId, id);

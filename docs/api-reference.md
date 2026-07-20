@@ -403,6 +403,16 @@ Response: `200 OK`, array of `Quest`:
   goal: { id: string; title: string } | null;
   completedToday: boolean;          // derived: for RECURRING quests, lastCompletedAt is today;
                                      // for others, status === 'COMPLETED'
+  // "Level-gated quests" - see below:
+  isLocked: boolean;                 // true if any requirement is unmet; a locked quest is never hidden
+  requirements: Array<{
+    type: 'LEVEL_THRESHOLD' | 'ACTIVITY_COUNT' | 'ACHIEVEMENT' | 'QUEST_COMPLETED' | 'GOAL_COMPLETED';
+    description: string;             // human-readable, e.g. "Character Level 5", "Complete 20 Running activities"
+    met: boolean;
+    progress?: { current: number; target: number };  // present for LEVEL_THRESHOLD/ACTIVITY_COUNT only
+  }>;
+  // "Reward claiming" - see below:
+  unclaimedCompletions: number;      // count of completions that happened but haven't had their reward claimed
 }
 ```
 
@@ -424,8 +434,32 @@ Request body (`CreateQuestDto`):
   skillRewardOverrides?: Array<{ skillId: string; amount: number }>;  // "XP Bundles" - see below
   attributeBonuses?: Array<{ attributeId: string; amount: number }>;
   deadline?: string;      // @IsISO8601
+  requirements?: QuestRequirementDto[];  // "level-gated quests" - see below
 }
 ```
+
+**"Level-gated quests" — `requirements`:** an optional list of prerequisites the quest is locked
+behind until every one is met (never partial - `isLocked` is `true` if *any* requirement is
+unmet). Omitting it (or passing `[]`) makes the quest immediately available, matching behavior
+before this feature existed. Each `QuestRequirementDto`:
+
+```ts
+{
+  type: 'LEVEL_THRESHOLD' | 'ACTIVITY_COUNT' | 'ACHIEVEMENT' | 'QUEST_COMPLETED' | 'GOAL_COMPLETED';
+  skillId?: string;          // LEVEL_THRESHOLD (skill-level check) or ACTIVITY_COUNT (required)
+  attributeId?: string;      // LEVEL_THRESHOLD (attribute-level check) - mutually exclusive with skillId
+  level?: number;            // LEVEL_THRESHOLD target level
+  count?: number;            // ACTIVITY_COUNT target count
+  achievementId?: string;    // ACHIEVEMENT
+  requiredQuestId?: string;  // QUEST_COMPLETED - a specific other quest, not "any quest"
+  requiredGoalId?: string;   // GOAL_COMPLETED - a specific goal, not "any goal"
+}
+```
+
+Omitting both `skillId` and `attributeId` on a `LEVEL_THRESHOLD` requirement checks the
+*character's* level. Only the fields relevant to `type` need be set; which combination is
+required per type is a service-level check (`QuestsService.validateRequirements`), not a
+decorator-level DTO rule - see `docs/gameplay-systems.md` for the full mechanics.
 
 If `xpReward` is omitted, it is derived from `difficulty` via a fixed table
 (`DIFFICULTY_XP` in `backend/src/common/leveling.ts`):
@@ -449,9 +483,12 @@ and `CreateGoalDto` below. See `docs/gameplay-systems.md` for the full mechanics
 
 Response: `201 Created` with the new `Quest`.
 
-Errors: `404 Not Found` if `goalId`, any `skillIds` entry, or any `attributeBonuses[].attributeId`
-isn't owned by the caller; `400 Bad Request` if a `skillRewardOverrides[].skillId` isn't in
-`skillIds`, or if any override/bonus `amount` is not a positive integer.
+Errors: `404 Not Found` if `goalId`, any `skillIds` entry, any `attributeBonuses[].attributeId`, or
+any `requirements[].skillId`/`attributeId`/`achievementId`/`requiredQuestId`/`requiredGoalId` isn't
+owned by the caller (or doesn't exist, for `achievementId`); `400 Bad Request` if a
+`skillRewardOverrides[].skillId` isn't in `skillIds`, if any override/bonus `amount` is not a
+positive integer, or if a requirement is missing the fields its `type` needs (e.g.
+`LEVEL_THRESHOLD` without a `level`, or with both `skillId` and `attributeId` set).
 
 ### `GET /quests/:id`
 
@@ -475,37 +512,75 @@ Partially update a quest. Body is `UpdateQuestDto = PartialType(CreateQuestDto) 
   skillRewardOverrides?: Array<{ skillId: string; amount: number }>;  // if present, fully replaces the overrides
   attributeBonuses?: Array<{ attributeId: string; amount: number }>;  // if present, fully replaces the bonuses
   deadline?: string;
+  requirements?: QuestRequirementDto[];  // if present, fully replaces the requirements - see POST /quests
   status?: QuestStatus;    // 'ACTIVE' | 'COMPLETED' | 'ARCHIVED' - direct status write, bypasses XP flow
 }
 ```
 
 Response: `200 OK` with the updated `Quest`.
 
-Errors: `404` / `403` for the quest; `404 Not Found` for an unowned `goalId`, `skillIds`, or
-`attributeBonuses[].attributeId` entry; `400 Bad Request` if a `skillRewardOverrides[].skillId`
-isn't in the quest's (possibly just-updated) `skillIds`, or if any override/bonus `amount` is not
-a positive integer.
+Errors: `404` / `403` for the quest; `404 Not Found` for an unowned `goalId`, `skillIds`,
+`attributeBonuses[].attributeId`, or `requirements[]` reference; `400 Bad Request` if a
+`skillRewardOverrides[].skillId` isn't in the quest's (possibly just-updated) `skillIds`, if any
+override/bonus `amount` is not a positive integer, if a requirement is missing fields its `type`
+needs, or if a `QUEST_COMPLETED` requirement's `requiredQuestId` is this same quest's own `id`
+("a quest cannot require itself").
 
 Note: setting `status: 'COMPLETED'` via `PATCH` does **not** award XP or run the completion
 workflow — only `POST /quests/:id/complete` does that.
 
 ### `POST /quests/:id/complete`
 
-Mark the quest complete and run the shared completion workflow (XP award, level checks,
-character streak, achievement checks, notifications — see "CompletionResult shape" below).
+Marks a completion - creates a `QuestCompletion` row - but does **not** award XP. A separate
+claim step (`POST /quests/:id/claim`, below) does that. This is the roadmap's `COMPLETED →
+REWARD CLAIMED` state, scoped to quests only (habits/goals keep the instant-reward flow).
 
 - `ONE_TIME` / `DEADLINE` / `MILESTONE` quests: can only be completed once; sets
-  `status: 'COMPLETED'`, `completedAt: now()`.
+  `status: 'COMPLETED'`, `completedAt: now()` (`QuestCompletion.periodKey: "once"`).
 - `RECURRING` quests: can be completed once per calendar day (UTC day key); sets
-  `lastCompletedAt: now()` each time, `status` is untouched.
+  `lastCompletedAt: now()` each time, `status` is untouched (`QuestCompletion.periodKey` is that
+  day's key) - a recurring quest can accumulate more than one unclaimed completion if the caller
+  doesn't claim every day.
 
-Response: `200 OK` with a `CompletionResult`.
+Response: `200 OK`:
+
+```ts
+{
+  quest: Quest;              // updated quest - see GET /quests for the shape, including unclaimedCompletions
+  completion: {
+    id: string;
+    questId: string;
+    userId: string;
+    periodKey: string;
+    completedAt: string;
+    claimedAt: string | null;  // always null in this response - nothing has been claimed yet
+  };
+}
+```
 
 Errors:
 - `404 Not Found` / `403 Forbidden` — quest doesn't exist / isn't owned by the caller.
-- `400 Bad Request` — quest `status === 'ARCHIVED'`.
-- `409 Conflict` — already completed (`"Quest already completed"` for one-time types, or
-  `"Quest already completed today"` for `RECURRING` quests completed earlier the same day).
+- `400 Bad Request` — quest `status === 'ARCHIVED'`, or the quest is locked (`isLocked: true` -
+  `"Quest is locked - requirements not yet met"`).
+- `409 Conflict` — already completed for this period (`"Quest already completed"` for one-time
+  types, or `"Quest already completed today"` for `RECURRING` quests completed earlier the same
+  day).
+
+### `POST /quests/:id/claim`
+
+Claims every not-yet-claimed completion for this quest (there can be more than one for a
+recurring quest not claimed in a few days), running the shared completion workflow (XP award,
+level checks, character streak, achievement checks — see "CompletionResult shape" below) once per
+completion, so the XP ledger keeps one event per actual completion rather than summing them.
+Re-reads the quest's *current* `xpReward`/tagged skills/XP Bundle config at claim time rather than
+a snapshot from when it was completed - see `docs/gameplay-systems.md`.
+
+Response: `200 OK` with `CompletionResult[]` - one entry per completion claimed, in the order they
+were completed.
+
+Errors:
+- `404 Not Found` / `403 Forbidden` — quest doesn't exist / isn't owned by the caller.
+- `409 Conflict` — `"No pending reward to claim for this quest"` if `unclaimedCompletions === 0`.
 
 ### `DELETE /quests/:id`
 

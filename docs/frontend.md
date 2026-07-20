@@ -47,10 +47,10 @@ for exact prop shapes, read the referenced files directly.
 | `/login` | `frontend/app/(auth)/login/page.tsx` | Email + password login form; on success calls `router.push('/dashboard')`. |
 | `/register` | `frontend/app/(auth)/register/page.tsx` | Email + username + password registration form; on success calls `router.push('/onboarding')`. |
 | `/onboarding` | `frontend/app/onboarding/page.tsx` | 4-step first-run wizard: pick starting skills, create a goal, add starter quests/habits. |
-| `/dashboard` | `frontend/app/(app)/dashboard/page.tsx` | Home screen: streak + level/XP header, an 8-axis "Character Shape" radar chart of attribute levels, today's habits, active quests, active goals, recent achievements, activity feed. |
+| `/dashboard` | `frontend/app/(app)/dashboard/page.tsx` | Home screen: streak + level/XP header, an 8-axis "Character Shape" radar chart of attribute levels, today's habits, active quests (incl. Locked/Complete/Claim Reward states), active goals, recent achievements, activity feed. |
 | `/skills` | `frontend/app/(app)/skills/page.tsx` | Skills grouped by the 8 fixed attributes, with progress bars; add-skill modal (suggested or custom) and delete. |
 | `/skills/[id]` | `frontend/app/(app)/skills/[id]/page.tsx` | Single skill detail: rename/edit description, cumulative XP growth chart, recent XP transaction list, delete. |
-| `/quests` | `frontend/app/(app)/quests/page.tsx` | Active/Completed quest tabs, create-quest modal (incl. a `RewardBundleEditor` "Advanced rewards" disclosure for per-skill XP overrides + attribute-only bonuses), complete action. |
+| `/quests` | `frontend/app/(app)/quests/page.tsx` | Active/Completed quest tabs, create-quest modal (incl. `RewardBundleEditor` and a `RequirementsEditor` "Prerequisites" disclosure for level-gated quests). Locked quest cards render dimmed with a requirement checklist instead of a Complete button; completing swaps the button to "Claim Reward" (the actual XP-awarding step - see `docs/gameplay-systems.md` § "Level-gated quests and reward claiming"). |
 | `/habits` | `frontend/app/(app)/habits/page.tsx` | Today's habits with streak counters, create-habit modal (incl. `RewardBundleEditor`), complete/pause/reactivate/delete. |
 | `/goals` | `frontend/app/(app)/goals/page.tsx` | Active/Completed goal tabs, create-goal modal (incl. `RewardBundleEditor`). |
 | `/goals/[id]` | `frontend/app/(app)/goals/[id]/page.tsx` | Single goal detail: linked quests, log-progress form (binary mark-complete or numeric value entry), delete. |
@@ -212,8 +212,11 @@ purely a presentation helper - the doc comment on the hook is explicit that **ca
 responsible for invalidating the relevant TanStack Query caches** (user, skills, achievements,
 etc.) themselves; `useCelebration` does not touch the query cache.
 
-`CompletionResult` (`frontend/src/lib/types.ts`), returned by the quest/habit `complete` endpoints
-and the goal `progress` endpoint:
+`CompletionResult` (`frontend/src/lib/types.ts`), returned by the habit `complete` endpoint, the
+goal `progress` endpoint, and the quest `claim` endpoint (as `CompletionResult[]`, one per pending
+completion claimed - the quest `complete` endpoint returns `{ quest, completion }` instead and
+never triggers a celebration, since no XP has moved yet; see `docs/gameplay-systems.md` §
+"Reward claiming"):
 
 ```ts
 interface CompletionResult {

@@ -1,5 +1,5 @@
 import { apiClient } from '../api-client';
-import { CompletionResult, Quest, QuestDifficulty, QuestType, SkillRewardOverride } from '../types';
+import { CompletionResult, Quest, QuestCompletionRecord, QuestDifficulty, QuestRequirementInput, QuestType, SkillRewardOverride } from '../types';
 
 export interface QuestFilters {
   status?: 'ACTIVE' | 'COMPLETED' | 'ARCHIVED';
@@ -27,6 +27,7 @@ export interface CreateQuestInput {
   skillRewardOverrides?: SkillRewardOverride[];
   attributeBonuses?: Array<{ attributeId: string; amount: number }>;
   deadline?: string;
+  requirements?: QuestRequirementInput[];
 }
 
 export async function createQuest(input: CreateQuestInput) {
@@ -39,8 +40,15 @@ export async function updateQuest(id: string, input: Partial<CreateQuestInput> &
   return data;
 }
 
+/** Marks a completion but does NOT award XP - see claimQuestReward. */
 export async function completeQuest(id: string) {
-  const { data } = await apiClient.post<CompletionResult>(`/quests/${id}/complete`);
+  const { data } = await apiClient.post<{ quest: Quest; completion: QuestCompletionRecord }>(`/quests/${id}/complete`);
+  return data;
+}
+
+/** Claims every pending completion for this quest, awarding XP for each. */
+export async function claimQuestReward(id: string) {
+  const { data } = await apiClient.post<CompletionResult[]>(`/quests/${id}/claim`);
   return data;
 }
 

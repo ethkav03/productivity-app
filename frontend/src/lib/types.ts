@@ -136,6 +136,38 @@ export type QuestType = 'ONE_TIME' | 'RECURRING' | 'DEADLINE' | 'MILESTONE';
 export type QuestDifficulty = 'EASY' | 'MEDIUM' | 'HARD' | 'EPIC' | 'LEGENDARY';
 export type QuestStatus = 'ACTIVE' | 'COMPLETED' | 'ARCHIVED';
 
+/** "Level-gated quests": a single prerequisite a quest must satisfy before it can be completed. Which fields are set depends on `type`. */
+export type QuestRequirementType = 'LEVEL_THRESHOLD' | 'ACTIVITY_COUNT' | 'ACHIEVEMENT' | 'QUEST_COMPLETED' | 'GOAL_COMPLETED';
+
+export interface QuestRequirementInput {
+  type: QuestRequirementType;
+  skillId?: string;
+  attributeId?: string;
+  level?: number;
+  count?: number;
+  achievementId?: string;
+  requiredQuestId?: string;
+  requiredGoalId?: string;
+}
+
+/** A requirement as returned in a Quest response - evaluated server-side against the caller's current stats. */
+export interface QuestRequirementStatus {
+  type: QuestRequirementType;
+  description: string;
+  met: boolean;
+  progress?: { current: number; target: number };
+}
+
+/** "Reward claiming": one completion of a quest. Completing creates this row; a separate claim step (POST /quests/:id/claim) awards XP. */
+export interface QuestCompletionRecord {
+  id: string;
+  questId: string;
+  userId: string;
+  periodKey: string;
+  completedAt: string;
+  claimedAt: string | null;
+}
+
 export interface Quest {
   id: string;
   userId: string;
@@ -156,6 +188,11 @@ export interface Quest {
   attributeBonuses: ActivityAttributeBonus[];
   goal?: Pick<Goal, 'id' | 'title'> | null;
   completedToday?: boolean;
+  /** True if any requirement is unmet - a locked quest is still returned (never hidden), just not completable yet. */
+  isLocked: boolean;
+  requirements: QuestRequirementStatus[];
+  /** Count of completions that happened but haven't had their reward claimed yet. */
+  unclaimedCompletions: number;
 }
 
 export type HabitFrequency = 'DAILY' | 'DAYS_OF_WEEK' | 'TIMES_PER_WEEK' | 'MONTHLY';
