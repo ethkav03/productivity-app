@@ -1,0 +1,1000 @@
+# Life RPG API Reference
+
+Complete reference for the Life RPG REST API, generated from the actual NestJS controllers and
+DTOs in `backend/src`. For architecture/setup, see the root `README.md`; this document goes
+deeper into exact request/response shapes.
+
+## Base URL and conventions
+
+- Local base URL: `http://localhost:3001/api`
+- Every route is served under the global prefix `/api`, set once via `app.setGlobalPrefix('api')`
+  in `backend/src/main.ts`. Controllers below are documented with their path **relative to
+  `/api`** (e.g. `POST /auth/login` means `POST http://localhost:3001/api/auth/login`).
+- Interactive, auto-generated OpenAPI/Swagger docs are served at `/api/docs`
+  (`http://localhost:3001/api/docs`), built from the same controllers/DTOs via
+  `SwaggerModule.setup('api/docs', app, document)`.
+- CORS is enabled with `credentials: true`, restricted to the origin configured by the
+  `CORS_ORIGIN` env var (`corsOrigin` config key).
+- All request bodies are validated with a global `ValidationPipe` configured with
+  `whitelist: true`, `forbidNonWhitelisted: true`, `transform: true`, and
+  `enableImplicitConversion: true`. Practical consequences:
+  - Unknown fields in a request body are rejected (400), not silently dropped.
+  - Fields fail validation according to the `class-validator` decorators on the DTO (documented
+    per-endpoint below): missing required fields, wrong types, out-of-range values, and
+    unrecognized enum values all produce `400 Bad Request`.
+- Unhandled/HTTP exceptions are normalized by a global `HttpExceptionFilter` into:
+  ```ts
+  { statusCode: number, timestamp: string, path: string, message: string | string[], ... }
+  ```
+  (any other fields from the underlying exception's response body are also spread in; validation
+  errors typically produce `message` as an array of per-field error strings).
+
+## Authentication
+
+Auth uses JWT access + refresh tokens (`@nestjs/jwt` + `passport-jwt`), issued by
+`AuthService`/`JwtStrategy` (`backend/src/auth`):
+
+- Obtain a token pair from `POST /auth/register` or `POST /auth/login`.
+- Every route **except the four under `/auth`** requires a valid access token, sent as:
+  ```
+  Authorization: Bearer <accessToken>
+  ```
+- The access token payload is `{ sub: userId, email, username }`, signed with `JWT_ACCESS_SECRET`
+  and expiring after `JWT_ACCESS_EXPIRES_IN` (default `15m`).
+- The refresh token payload is `{ sub: userId }`, signed with `JWT_REFRESH_SECRET`, expiring after
+  `JWT_REFRESH_EXPIRES_IN` (default `30d`). The server also stores a bcrypt hash of the current
+  refresh token on the user row (`hashedRefreshToken`); `POST /auth/refresh` verifies the token
+  against both the JWT signature and that hash, and `POST /auth/logout` clears the stored hash so
+  the old refresh token can no longer be used.
+- Enforcement: protected controllers are decorated with `@UseGuards(JwtAuthGuard)`
+  (`backend/src/auth/guards/jwt-auth.guard.ts`, a thin subclass of Passport's `AuthGuard('jwt')`).
+  The guard runs `JwtStrategy.validate()`, which trusts the token's `sub`/`email`/`username`
+  claims and attaches `{ userId, email, username }` to `request.user`. Route handlers pull this
+  off the request via the `@CurrentUser()` param decorator
+  (`backend/src/common/decorators/current-user.decorator.ts`), typed as `AuthenticatedUser`:
+  ```ts
+  interface AuthenticatedUser {
+    userId: string;
+    email: string;
+    username: string;
+  }
+  ```
+  A missing/invalid/expired access token results in `401 Unauthorized` before the handler runs.
+- Ownership is enforced per-resource inside each service (not the guard): fetching/mutating a
+  quest/habit/goal/skill/attribute/notification that exists but belongs to another user returns
+  `403 Forbidden`; a nonexistent id returns `404 Not Found`.
+
+---
+
+## Auth (`/auth`)
+
+No endpoint under `/auth` requires a Bearer token except `logout`.
+
+### `POST /auth/register`
+
+Create a new user account. Also auto-creates all 8 fixed `Attribute` rows for the user (see
+Attributes section) inside the same DB transaction, then issues a session.
+
+Auth required: no.
+
+Request body (`RegisterDto`):
+
+```ts
+{
+  email: string;      // must be a valid email (@IsEmail)
+  username: string;   // 3-24 chars, matches /^[a-zA-Z0-9_]+$/ (letters, numbers, underscore only)
+  password: string;   // 8-72 chars
+}
+```
+
+Response: `201 Created` with a session payload (same shape as `login`, see below).
+
+Errors: `409 Conflict` if the email or username is already taken (message distinguishes which).
+
+### `POST /auth/login`
+
+Authenticate with email + password and issue a new session.
+
+Auth required: no.
+
+Request body (`LoginDto`):
+
+```ts
+{
+  email: string;    // @IsEmail
+  password: string; // @IsString
+}
+```
+
+Response: `200 OK`
+
+```ts
+{
+  user: PublicUser;      // see "PublicUser shape" below
+  accessToken: string;
+  refreshToken: string;
+}
+```
+
+Errors: `401 Unauthorized` ("Invalid email or password") if the email doesn't exist or the
+password doesn't match.
+
+### `POST /auth/refresh`
+
+Exchange a still-valid refresh token for a brand-new access + refresh token pair (refresh tokens
+are rotated on every use — the old one's hash is overwritten).
+
+Auth required: no (the refresh token itself is the credential, passed in the body, not as a
+Bearer header).
+
+Request body (`RefreshDto`):
+
+```ts
+{
+  refreshToken: string; // @IsString
+}
+```
+
+Response: `200 OK`, same shape as `login`: `{ user, accessToken, refreshToken }`.
+
+Errors: `401 Unauthorized` if the token fails JWT verification, the user no longer exists, the
+user has no stored refresh token hash, or the token doesn't match the stored hash.
+
+### `POST /auth/logout`
+
+Invalidates the user's current refresh token by clearing `hashedRefreshToken` on the user row.
+Does not blacklist the still-live access token (access tokens simply expire on their own).
+
+Auth required: yes (Bearer access token).
+
+Request body: none.
+
+Response: `204 No Content`.
+
+---
+
+## Users (`/users`)
+
+All routes require a Bearer token.
+
+### `GET /users/me`
+
+Return the current user's profile.
+
+Response: `200 OK` with a `PublicUser` (see shape below).
+
+Errors: `404 Not Found` if the user row no longer exists.
+
+### `PATCH /users/me`
+
+Partially update the current user's profile.
+
+Request body (`UpdateUserDto`, all fields optional):
+
+```ts
+{
+  username?: string; // 3-24 chars, /^[a-zA-Z0-9_]+$/
+  avatar?: string;   // @IsUrl({ require_tld: false }) - must be URL-shaped
+}
+```
+
+Response: `200 OK` with the updated `PublicUser`.
+
+Errors: `409 Conflict` if `username` is already taken by another user.
+
+### PublicUser shape
+
+Returned by `register`, `login`, `refresh`, `GET /users/me`, and `PATCH /users/me`
+(`backend/src/common/serializers/public-user.ts`):
+
+```ts
+{
+  id: string;
+  email: string;
+  username: string;
+  avatar: string | null;
+  level: number;
+  totalXP: number;
+  currentXP: number;       // XP earned within the current level (derived, not stored)
+  xpForNextLevel: number;  // XP needed to complete the current level (derived: 100 * level)
+  currentStreak: number;
+  longestStreak: number;
+  createdAt: string; // ISO date
+}
+```
+
+---
+
+## Attributes (`/attributes`)
+
+The 8 fixed top-level stats (Physical, Intelligence, Discipline, Energy, Social, Wealth,
+Creativity, Wisdom). Every user gets all 8 automatically at registration — attributes are
+read-only via the API (no create/update/delete endpoints); every skill belongs to exactly one.
+All routes require a Bearer token.
+
+### `GET /attributes`
+
+List the caller's 8 attributes, each with its nested skills, in fixed display order
+(Physical, Intelligence, Discipline, Energy, Social, Wealth, Creativity, Wisdom).
+
+Response: `200 OK`, an array of:
+
+```ts
+{
+  id: string;
+  userId: string;
+  key: 'PHYSICAL' | 'INTELLIGENCE' | 'DISCIPLINE' | 'ENERGY' | 'SOCIAL' | 'WEALTH' | 'CREATIVITY' | 'WISDOM';
+  name: string;
+  description: string | null;
+  icon: string | null;
+  level: number;
+  totalXP: number;
+  currentXP: number;       // derived
+  xpForNextLevel: number;  // derived
+  createdAt: string;
+  updatedAt: string;
+  skills: Array<Skill & { attribute: { id: string; key: string; name: string; icon: string | null } }>;
+}
+```
+
+### `GET /attributes/:id`
+
+Detail view for one attribute: adds the last 7 days' XP total and the 20 most recent
+`XPTransaction` rows for it.
+
+Response: `200 OK`, the same shape as a list item plus:
+
+```ts
+{
+  weeklyXP: number;          // sum of XP transactions on this attribute in the last 7 days
+  recentActivity: XPTransaction[]; // up to 20, newest first
+}
+```
+
+Errors: `404 Not Found` if the id doesn't exist, `403 Forbidden` if it belongs to another user.
+
+---
+
+## Skills (`/skills`)
+
+All routes require a Bearer token.
+
+### `GET /skills/suggestions`
+
+Static list of suggested default skills grouped by attribute, used for onboarding / the "Add
+Skill" picker. Not user-scoped (same result for everyone, no DB query on the user).
+
+Response: `200 OK`:
+
+```ts
+Array<{
+  key: string;      // AttributeKey
+  name: string;
+  description: string;
+  icon: string;
+  skills: Array<{ name: string; attributeKey: string; description?: string; icon?: string }>;
+}>
+```
+
+### `GET /skills`
+
+List all of the caller's skills, alphabetically, each with its nested `attribute` summary and
+derived level fields.
+
+Response: `200 OK`, array of `Skill`:
+
+```ts
+{
+  id: string;
+  userId: string;
+  attributeId: string;
+  name: string;
+  description: string | null;
+  icon: string | null;
+  isDefault: boolean;
+  level: number;
+  totalXP: number;
+  currentXP: number;       // derived
+  xpForNextLevel: number;  // derived
+  createdAt: string;
+  updatedAt: string;
+  attribute: { id: string; key: string; name: string; icon: string | null };
+}
+```
+
+### `POST /skills`
+
+Create a new skill under one of the user's attributes.
+
+Request body (`CreateSkillDto`):
+
+```ts
+{
+  name: string;         // 2-40 chars
+  attributeId: string;  // @IsUUID, must be one of the caller's own attributes
+  description?: string; // max 280 chars
+  icon?: string;
+}
+```
+
+Response: `201 Created` with the new `Skill` (same shape as the list item above).
+
+Errors: `404 Not Found` if `attributeId` doesn't exist or isn't owned by the caller;
+`409 Conflict` if a skill with the same `name` already exists under that attribute for this user
+(uniqueness is scoped per `[userId, attributeId, name]`, so the same name can exist under two
+different attributes).
+
+### `GET /skills/:id`
+
+Detail view for one skill: adds the last 7 days' XP total and the 20 most recent `XPTransaction`
+rows for it.
+
+Response: `200 OK`, the skill shape plus `{ weeklyXP: number; recentActivity: XPTransaction[] }`.
+
+Errors: `404 Not Found` / `403 Forbidden` (not found vs. not owned).
+
+### `PATCH /skills/:id`
+
+Partially update a skill. Body is `UpdateSkillDto = PartialType(CreateSkillDto)` — every
+`CreateSkillDto` field, all optional, same validation constraints as create.
+
+```ts
+{
+  name?: string;         // 2-40 chars
+  attributeId?: string;  // @IsUUID; if present, must be one of the caller's own attributes
+  description?: string;  // max 280 chars
+  icon?: string;
+}
+```
+
+Response: `200 OK` with the updated skill.
+
+Errors: `404` / `403` for the skill itself; `404 Not Found` if a supplied `attributeId` isn't
+owned by the caller.
+
+### `DELETE /skills/:id`
+
+Delete a skill. Cascades to its `QuestSkill`/`HabitSkill`/`GoalSkill` join rows and
+`XPTransaction` rows at the database level (`onDelete: Cascade` in the Prisma schema).
+
+Response: `200 OK` with `{ id: string; deleted: true }`.
+
+Errors: `404` / `403`.
+
+---
+
+## Quests (`/quests`)
+
+All routes require a Bearer token.
+
+### `GET /quests`
+
+List the caller's quests, newest first.
+
+Query params:
+
+| Param    | Type          | Notes                                   |
+| -------- | ------------- | ---------------------------------------- |
+| `status` | `QuestStatus` | `ACTIVE` \| `COMPLETED` \| `ARCHIVED`. Filters exactly. |
+| `goalId` | `string`      | Filter to quests linked to this goal.    |
+
+Response: `200 OK`, array of `Quest`:
+
+```ts
+{
+  id: string;
+  userId: string;
+  goalId: string | null;
+  title: string;
+  description: string | null;
+  type: 'ONE_TIME' | 'RECURRING' | 'DEADLINE' | 'MILESTONE';
+  difficulty: 'EASY' | 'MEDIUM' | 'HARD' | 'EPIC' | 'LEGENDARY';
+  status: 'ACTIVE' | 'COMPLETED' | 'ARCHIVED';
+  xpReward: number;
+  deadline: string | null;
+  completedAt: string | null;
+  lastCompletedAt: string | null;   // last completion date, RECURRING quests only
+  createdAt: string;
+  updatedAt: string;
+  skills: Skill[];                  // flattened from the questSkills join table
+  goal: { id: string; title: string } | null;
+  completedToday: boolean;          // derived: for RECURRING quests, lastCompletedAt is today;
+                                     // for others, status === 'COMPLETED'
+}
+```
+
+### `POST /quests`
+
+Create a quest, optionally linked to a goal and/or tagged with skills.
+
+Request body (`CreateQuestDto`):
+
+```ts
+{
+  title: string;          // 2-120 chars
+  description?: string;   // max 500 chars
+  type?: QuestType;              // default 'ONE_TIME'
+  difficulty?: QuestDifficulty;  // default 'MEDIUM'
+  xpReward?: number;      // int, >= 1. Defaults from difficulty if omitted (see DIFFICULTY_XP below)
+  goalId?: string;        // @IsUUID, must be a goal owned by the caller
+  skillIds?: string[];    // each @IsUUID, must all be skills owned by the caller
+  deadline?: string;      // @IsISO8601
+}
+```
+
+If `xpReward` is omitted, it is derived from `difficulty` via a fixed table
+(`DIFFICULTY_XP` in `backend/src/common/leveling.ts`):
+
+| Difficulty  | Default XP |
+| ----------- | ---------- |
+| EASY        | 25         |
+| MEDIUM      | 50         |
+| HARD        | 100        |
+| EPIC        | 250        |
+| LEGENDARY   | 500        |
+
+Response: `201 Created` with the new `Quest`.
+
+Errors: `404 Not Found` if `goalId` or any `skillIds` entry isn't owned by the caller.
+
+### `GET /quests/:id`
+
+Response: `200 OK` with a single `Quest`.
+
+Errors: `404` / `403`.
+
+### `PATCH /quests/:id`
+
+Partially update a quest. Body is `UpdateQuestDto = PartialType(CreateQuestDto) & { status? }`:
+
+```ts
+{
+  title?: string;
+  description?: string;
+  type?: QuestType;
+  difficulty?: QuestDifficulty;
+  xpReward?: number;
+  goalId?: string;         // if present (non-null), must be owned by caller
+  skillIds?: string[];     // if present, fully replaces the quest's skill tags
+  deadline?: string;
+  status?: QuestStatus;    // 'ACTIVE' | 'COMPLETED' | 'ARCHIVED' - direct status write, bypasses XP flow
+}
+```
+
+Response: `200 OK` with the updated `Quest`.
+
+Errors: `404` / `403` for the quest; `404 Not Found` for an unowned `goalId` or `skillIds` entry.
+
+Note: setting `status: 'COMPLETED'` via `PATCH` does **not** award XP or run the completion
+workflow — only `POST /quests/:id/complete` does that.
+
+### `POST /quests/:id/complete`
+
+Mark the quest complete and run the shared completion workflow (XP award, level checks,
+character streak, achievement checks, notifications — see "CompletionResult shape" below).
+
+- `ONE_TIME` / `DEADLINE` / `MILESTONE` quests: can only be completed once; sets
+  `status: 'COMPLETED'`, `completedAt: now()`.
+- `RECURRING` quests: can be completed once per calendar day (UTC day key); sets
+  `lastCompletedAt: now()` each time, `status` is untouched.
+
+Response: `200 OK` with a `CompletionResult`.
+
+Errors:
+- `404 Not Found` / `403 Forbidden` — quest doesn't exist / isn't owned by the caller.
+- `400 Bad Request` — quest `status === 'ARCHIVED'`.
+- `409 Conflict` — already completed (`"Quest already completed"` for one-time types, or
+  `"Quest already completed today"` for `RECURRING` quests completed earlier the same day).
+
+### `DELETE /quests/:id`
+
+Response: `200 OK` with `{ id: string; deleted: true }`.
+
+Errors: `404` / `403`.
+
+---
+
+## Habits (`/habits`)
+
+All routes require a Bearer token.
+
+### `GET /habits`
+
+List all of the caller's habits, oldest first, each annotated with whether it's already been
+completed today (via a `HabitCompletion` row keyed on today's UTC day).
+
+Response: `200 OK`, array of `Habit`:
+
+```ts
+{
+  id: string;
+  userId: string;
+  title: string;
+  description: string | null;
+  frequency: 'DAILY' | 'DAYS_OF_WEEK' | 'TIMES_PER_WEEK' | 'MONTHLY';
+  daysOfWeek: number[];      // 0-6, only meaningful when frequency === 'DAYS_OF_WEEK'
+  timesPerWeek: number | null;
+  timeOfDay: string | null;  // "HH:mm"
+  xpReward: number;
+  isActive: boolean;
+  currentStreak: number;
+  longestStreak: number;
+  createdAt: string;
+  updatedAt: string;
+  skills: Skill[];           // flattened from the habitSkills join table
+  completedToday: boolean;   // derived from HabitCompletion for today's periodKey
+}
+```
+
+### `POST /habits`
+
+Request body (`CreateHabitDto`):
+
+```ts
+{
+  title: string;           // 2-120 chars
+  description?: string;    // max 500 chars
+  frequency?: HabitFrequency;  // default 'DAILY'
+  daysOfWeek?: number[];   // each int in [0, 6]
+  timesPerWeek?: number;   // int, 1-14
+  timeOfDay?: string;      // "HH:mm", 24-hour, matches /^([01]\d|2[0-3]):[0-5]\d$/
+  xpReward?: number;       // int, >= 1. Default 10 if omitted
+  skillIds?: string[];     // each @IsUUID, must be owned by the caller
+}
+```
+
+Response: `201 Created` with the new `Habit` (`completedToday: false`).
+
+Errors: `404 Not Found` if any `skillIds` entry isn't owned by the caller.
+
+### `PATCH /habits/:id`
+
+Body is `UpdateHabitDto = PartialType(CreateHabitDto) & { isActive?: boolean }`:
+
+```ts
+{
+  title?: string;
+  description?: string;
+  frequency?: HabitFrequency;
+  daysOfWeek?: number[];
+  timesPerWeek?: number;
+  timeOfDay?: string;
+  xpReward?: number;
+  skillIds?: string[];   // if present, fully replaces the habit's skill tags
+  isActive?: boolean;    // pause/resume the habit
+}
+```
+
+Response: `200 OK` with the updated `Habit`.
+
+Errors: `404` / `403` for the habit; `404 Not Found` for an unowned `skillIds` entry.
+
+### `DELETE /habits/:id`
+
+Response: `200 OK` with `{ id: string; deleted: true }`.
+
+Errors: `404` / `403`.
+
+### `POST /habits/:id/complete`
+
+Record a completion for the current period (day) and run the shared completion workflow.
+Duplicate completion in the same UTC day is prevented at the database level via a unique
+constraint on `HabitCompletion[habitId, periodKey]`, checked before any XP is awarded. Also
+updates the habit's own `currentStreak`/`longestStreak` (independent of the character-level
+streak tracked by `ProgressionService`).
+
+Response: `200 OK` with a `CompletionResult`.
+
+Errors:
+- `404 Not Found` / `403 Forbidden` — habit doesn't exist / isn't owned by the caller.
+- `400 Bad Request` — `"Habit is not active"` if `isActive` is `false`.
+- `409 Conflict` — `"Habit already completed for this period"` if already completed today.
+
+---
+
+## Goals (`/goals`)
+
+All routes require a Bearer token.
+
+### `GET /goals`
+
+List the caller's goals, newest first.
+
+Query params:
+
+| Param    | Type         | Notes                                              |
+| -------- | ------------ | --------------------------------------------------- |
+| `status` | `GoalStatus` | `ACTIVE` \| `COMPLETED` \| `ABANDONED`. Filters exactly. |
+
+Response: `200 OK`, array of `Goal`:
+
+```ts
+{
+  id: string;
+  userId: string;
+  title: string;
+  description: string | null;
+  category: string | null;
+  type: 'NUMERIC' | 'COMPLETION' | 'BINARY';
+  status: 'ACTIVE' | 'COMPLETED' | 'ABANDONED';
+  targetValue: number | null;
+  currentValue: number;
+  unit: string | null;
+  xpReward: number;
+  startDate: string;
+  targetDate: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  skills: Skill[];             // flattened from the goalSkills join table
+  progressPercent: number;     // derived, 0-100, see rules below
+}
+```
+
+`progressPercent` derivation:
+- `BINARY` goals: `100` if `status === 'COMPLETED'`, else `0`.
+- `COMPLETION` goals: `(count of linked quests with status COMPLETED) / targetValue * 100`,
+  clamped to `[0, 100]`.
+- `NUMERIC` goals: `currentValue / targetValue * 100`, clamped to `[0, 100]`.
+- If `targetValue` is null or `<= 0` (and type isn't `BINARY`), `progressPercent` is `0`.
+
+### `POST /goals`
+
+Request body (`CreateGoalDto`):
+
+```ts
+{
+  title: string;             // 2-120 chars
+  description?: string;      // max 500 chars
+  category?: string;         // max 60 chars
+  type?: GoalType;            // default 'BINARY'
+  targetValue?: number;       // >= 0. Required if type is 'NUMERIC' or 'COMPLETION' (400 if missing)
+  unit?: string;               // max 20 chars
+  targetDate?: string;         // @IsISO8601
+  xpReward?: number;           // int, >= 1. Default 500 if omitted
+  skillIds?: string[];         // each @IsUUID, must be owned by the caller
+}
+```
+
+After creation, `AchievementsService.checkAndUnlock` is run directly (goal-creation-driven
+achievements such as "Goal Setter" have no XP event to hang off, so they're checked here rather
+than via the completion workflow) — any newly unlocked achievements raise notifications as a side
+effect, but are not returned from this endpoint.
+
+Response: `201 Created` with the new `Goal`.
+
+Errors: `404 Not Found` for an unowned `skillIds` entry; `400 Bad Request` if `type` is `NUMERIC`
+or `COMPLETION` and `targetValue` is omitted.
+
+### `GET /goals/:id`
+
+Response: `200 OK` with the goal shape plus `quests: Quest[]` — every quest linked to this goal
+(`goalId === id`), newest first, raw Prisma rows (not the full serialized quest shape used by
+`/quests`).
+
+Errors: `404` / `403`.
+
+### `PATCH /goals/:id`
+
+Body is `UpdateGoalDto = PartialType(CreateGoalDto) & { status?: GoalStatus }`:
+
+```ts
+{
+  title?: string;
+  description?: string;
+  category?: string;
+  targetValue?: number;
+  unit?: string;
+  targetDate?: string;
+  xpReward?: number;
+  skillIds?: string[];   // if present, fully replaces the goal's skill tags
+  status?: GoalStatus;   // 'ACTIVE' | 'COMPLETED' | 'ABANDONED' - direct status write, bypasses XP flow
+}
+// Note: `type` is inherited from PartialType(CreateGoalDto) in the DTO's type signature but the
+// service's update() does not persist it - changing a goal's type after creation has no effect.
+```
+
+Response: `200 OK` with the updated `Goal`.
+
+Errors: `404` / `403` for the goal; `404 Not Found` for an unowned `skillIds` entry.
+
+### `POST /goals/:id/progress`
+
+Report progress toward a goal. Only works on goals with `status === 'ACTIVE'`.
+
+Request body (`ProgressGoalDto`):
+
+```ts
+{
+  value: number; // @IsNumber
+}
+```
+
+Behavior by goal type:
+- `BINARY`: `value >= 1` marks the goal complete (`currentValue` becomes `1`); otherwise no
+  change to `currentValue`.
+- `NUMERIC` / `COMPLETION`: `currentValue` is set directly to `value`; the goal completes when
+  `currentValue >= targetValue`.
+
+When the goal newly completes, `status` becomes `COMPLETED`, `completedAt` is set, and the shared
+completion workflow runs (`sourceType: 'GOAL_COMPLETION'`, `amount: goal.xpReward`).
+
+Response: `200 OK`:
+
+```ts
+{
+  goal: Goal;               // updated goal, same shape as GET /goals
+  completion?: CompletionResult; // present only if this call just completed the goal
+}
+```
+
+Errors: `404` / `403`; `400 Bad Request` — `"Goal is not active"` if `status !== 'ACTIVE'`.
+
+### `DELETE /goals/:id`
+
+Response: `200 OK` with `{ id: string; deleted: true }`.
+
+Errors: `404` / `403`.
+
+---
+
+## Achievements (`/achievements`)
+
+All routes require a Bearer token. There is no create/update/delete endpoint — achievement
+*definitions* are seed data (`backend/prisma/seed.ts`); unlocking happens as a side effect of the
+completion workflow / goal creation, not via a dedicated endpoint.
+
+### `GET /achievements`
+
+List every achievement definition in the system (not user-scoped), ordered by
+`requirementValue` ascending.
+
+Response: `200 OK`, array of `Achievement`:
+
+```ts
+{
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  icon: string | null;
+  requirementType: 'LEVEL_REACHED' | 'STREAK_LENGTH' | 'QUESTS_COMPLETED' | 'GOALS_COMPLETED'
+    | 'HABITS_COMPLETED' | 'SKILL_LEVEL_REACHED' | 'SKILL_ACTIVITY_COUNT' | 'GOALS_CREATED'
+    | 'ATTRIBUTE_LEVEL_REACHED';
+  requirementValue: number;
+  skillName: string | null;      // only set for SKILL_LEVEL_REACHED / SKILL_ACTIVITY_COUNT
+  attributeKey: string | null;   // only set for ATTRIBUTE_LEVEL_REACHED (and optionally the skill-scoped types)
+  createdAt: string;
+}
+```
+
+### `GET /achievements/unlocked`
+
+List achievements the caller has unlocked, most recent first.
+
+Response: `200 OK`, array of:
+
+```ts
+{
+  id: string;
+  userId: string;
+  achievementId: string;
+  unlockedAt: string;
+  achievement: Achievement; // full nested achievement definition
+}
+```
+
+---
+
+## Notifications (`/notifications`)
+
+In-app notifications (level up, achievement unlocks, etc.), created as a side effect of the
+completion workflow / achievement engine — no create endpoint. All routes require a Bearer token.
+
+### `GET /notifications`
+
+List up to the 50 most recent notifications for the caller, newest first.
+
+Query params:
+
+| Param    | Type      | Notes                                                          |
+| -------- | --------- | ---------------------------------------------------------------- |
+| `unread` | `string`  | Pass the literal string `"true"` to return only unread notifications; any other value (or omission) returns all. |
+
+Response: `200 OK`, array of:
+
+```ts
+{
+  id: string;
+  userId: string;
+  type: 'HABIT_REMINDER' | 'QUEST_DEADLINE' | 'STREAK_WARNING' | 'LEVEL_UP' | 'ACHIEVEMENT_UNLOCK' | 'GOAL_MILESTONE';
+  title: string;
+  message: string;
+  read: boolean;
+  createdAt: string;
+}
+```
+
+### `PATCH /notifications/:id/read`
+
+Mark a single notification read.
+
+Response: `200 OK` with the updated notification.
+
+Errors: `404 Not Found` if it doesn't exist, `403 Forbidden` if it isn't the caller's.
+
+### `PATCH /notifications/read-all`
+
+Mark all of the caller's unread notifications read.
+
+Response: `200 OK` with a Prisma `updateMany` result: `{ count: number }`.
+
+---
+
+## Analytics (`/analytics`)
+
+Read-only aggregation over the XP ledger (`XPTransaction`). All routes require a Bearer token.
+All character-level aggregates filter `skillId: null, attributeId: null` to isolate the one
+ledger row per completion event (as opposed to the per-skill/per-attribute mirror rows), so
+totals aren't inflated by multi-skill quests/habits.
+
+### `GET /analytics/overview`
+
+Response: `200 OK`:
+
+```ts
+{
+  level: number;
+  currentXP: number;         // derived from totalXP
+  xpForNextLevel: number;    // derived
+  totalXP: number;
+  xpThisWeek: number;        // sum of character-level XP transactions in the last 7 days
+  activitiesCompleted: number; // count of QUEST_COMPLETION/HABIT_COMPLETION/GOAL_COMPLETION rows, all time
+  currentStreak: number;
+  longestStreak: number;
+  mostImprovedSkill: string | null; // name of the skill with the most XP in the last 7 days
+}
+```
+
+### `GET /analytics/xp`
+
+Daily XP totals over a trailing window.
+
+Query params:
+
+| Param  | Type   | Notes                                                          |
+| ------ | ------ | ----------------------------------------------------------------- |
+| `days` | number | Optional, default `30`. Clamped to `[1, 365]`. Non-numeric input falls back to `30`. |
+
+Response: `200 OK`, one entry per day in the range (including zero-XP days), ascending:
+
+```ts
+Array<{ date: string; amount: number }> // date is "YYYY-MM-DD"
+```
+
+### `GET /analytics/skills`
+
+Per-skill XP snapshot for the caller, alphabetical by name.
+
+Response: `200 OK`:
+
+```ts
+Array<{
+  skillId: string;
+  name: string;
+  attributeKey: string;
+  level: number;
+  totalXP: number;
+  weeklyXP: number; // sum of XP transactions on this skill in the last 7 days
+}>
+```
+
+### `GET /analytics/attributes`
+
+Per-attribute XP snapshot for the caller.
+
+Response: `200 OK`:
+
+```ts
+Array<{
+  attributeId: string;
+  key: string;
+  name: string;
+  icon: string | null;
+  level: number;
+  totalXP: number;
+  weeklyXP: number;
+}>
+```
+
+### `GET /analytics/activity`
+
+Daily activity-completion counts over a trailing window (a "GitHub-style" heatmap source).
+
+Query params:
+
+| Param  | Type   | Notes                                                          |
+| ------ | ------ | ----------------------------------------------------------------- |
+| `days` | number | Optional, default `84`. Clamped to `[1, 365]`. Non-numeric input falls back to `84`. |
+
+Response: `200 OK`, one entry per day in the range:
+
+```ts
+Array<{ date: string; count: number }> // count of QUEST_COMPLETION/HABIT_COMPLETION/GOAL_COMPLETION events that day
+```
+
+### `GET /analytics/feed`
+
+Recent character-level XP events (an activity feed), newest first, each annotated with the
+human-readable title of its source quest/habit/goal when applicable.
+
+Query params:
+
+| Param   | Type   | Notes                                                    |
+| ------- | ------ | ---------------------------------------------------------- |
+| `limit` | number | Optional, default `15`. Clamped to `[1, 100]`. Non-numeric input falls back to `15`. |
+
+Response: `200 OK`:
+
+```ts
+Array<{
+  id: string;
+  userId: string;
+  skillId: null;
+  attributeId: null;
+  amount: number;
+  sourceType: 'QUEST_COMPLETION' | 'HABIT_COMPLETION' | 'GOAL_COMPLETION' | 'ACHIEVEMENT_BONUS' | 'CORRECTION';
+  sourceId: string | null;
+  note: string | null;
+  createdAt: string;
+  sourceTitle: string | null; // resolved title of the linked quest/habit/goal, or null
+}>
+```
+
+---
+
+## CompletionResult shape
+
+`POST /quests/:id/complete`, `POST /habits/:id/complete`, and `POST /goals/:id/progress` (when
+progress causes the goal to complete) all delegate to the shared
+`ProgressionService.completeActivity` workflow
+(`backend/src/progression/progression.types.ts`), and return (or embed) its result:
+
+```ts
+interface CompletionResult {
+  xpGained: number;
+  levelUp: boolean;
+  newLevel: number;
+  skillResults: Array<{ skillId: string; leveledUp: boolean; newLevel: number }>;
+  attributeResults: Array<{ attributeId: string; leveledUp: boolean; newLevel: number }>;
+  achievementsUnlocked: string[]; // achievement ids newly unlocked by this completion
+  streak?: { currentStreak: number; longestStreak: number }; // character-level streak, present
+                                                               // when the activity counts toward
+                                                               // the daily streak (the default)
+}
+```
+
+This one workflow is responsible for: creating the `XPTransaction` ledger rows (one
+character-level row plus one per associated skill and one per that skill's attribute),
+recalculating levels for the character/skills/attributes from cumulative XP, updating the
+character's daily streak, running the achievement engine
+(`AchievementsService.checkAndUnlock`), and raising any resulting notifications
+(`LEVEL_UP`, `ACHIEVEMENT_UNLOCK`) — so every resource module gets identical behavior instead of
+reimplementing it.
+
+Endpoints returning a bare `CompletionResult` (`quests/:id/complete`, `habits/:id/complete`)
+respond `200 OK` with the object above directly. `goals/:id/progress` wraps it as
+`{ goal, completion? }` (see the Goals section) since a progress update doesn't always complete
+the goal.
+
+---
+
+## Keeping this document in sync
+
+This file is a hand-written mirror of `backend/src/**/*.controller.ts` and their DTOs. Whenever
+an endpoint is added, removed, or its request/response shape changes (new/renamed/retyped DTO
+field, new query param, new status code, new business rule), update this file in the same
+change. Do not rely on the Swagger UI at `/api/docs` alone as the source of truth for other
+developers — it documents decorated fields but not derived response fields (e.g.
+`currentXP`/`xpForNextLevel`/`completedToday`/`progressPercent`) or business-rule side effects
+described above.

@@ -10,6 +10,11 @@ This is a full-stack implementation of the Life RPG MVP: a Next.js frontend, a N
 backend, and PostgreSQL, wired together end-to-end (auth, gameplay loop, achievements engine,
 analytics, notifications).
 
+This README covers setup and running the project. For the detailed technical/product reference
+(data model, full API reference, backend module map, the XP/leveling/achievement mechanics,
+frontend routing, the design system, and the original product specs) see **[`docs/`](./docs/)**,
+starting with [`docs/architecture.md`](./docs/architecture.md).
+
 ## Core gameplay loop
 
 ```

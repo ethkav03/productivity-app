@@ -1,0 +1,95 @@
+# Changelog
+
+Dated log of notable changes to Life RPG. This is a narrative history for orientation ("what
+changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
+messages.
+
+## 2026-07-19 — `docs/` created
+
+Added this documentation folder: `architecture.md`, `data-model.md`, `api-reference.md`,
+`backend.md`, `gameplay-systems.md`, `frontend.md`, `design-system.md`, `mvp-spec.md`,
+`attribute-hierarchy-spec.md`, and this changelog. Established the maintenance policy: update the
+relevant doc in the same change whenever the code it describes changes.
+
+## 2026-07-19 — Attribute color palette
+
+Replaced skill-name badge lists on quest/habit/goal card previews with a compact `AttributeDots`
+indicator (one deduplicated colored dot per attribute represented, named via tooltip - never
+color as the only cue). Chose and validated an 8-color categorical palette for the attributes
+using the project's dataviz-skill methodology (fixed hue order, CVD-safety and contrast validated
+against this app's actual light/dark card surfaces via `scripts/validate_palette.js`, not picked
+by eye). Applied the same palette to the Skills page attribute icons, the Analytics "Attribute
+Progression" cards, and the Skill Progression bar chart (now colored per-bar by attribute, with a
+legend). New files: `frontend/src/lib/attribute-colors.ts`,
+`frontend/src/components/ui/attribute-dots.tsx`; new CSS custom properties `--attr-*` in
+`frontend/app/globals.css` (light + dark). Backend: `AnalyticsService.skillProgress` now also
+returns each skill's `attributeKey`.
+
+## 2026-07-19 — Attribute hierarchy
+
+Implemented the two-tier character-stat system from `attribute-hierarchy-spec.md`: added the
+`Attribute` Prisma model and `AttributeKey` enum (8 fixed values), made `Skill.attributeId` a
+required FK (skill-name uniqueness re-scoped from `[userId, name]` to
+`[userId, attributeId, name]` so names like "Focus" can exist under multiple attributes),
+extended `XPTransaction` with an optional `attributeId` so `XpService.awardXp` cascades XP from
+skill → attribute in addition to skill → character. `AuthService.register` now auto-creates all
+8 fixed attributes for every new user in the same DB transaction as the user row (attributes are
+not opt-in, unlike skills). Rebuilt the default skill suggestion list
+(`backend/src/skills/default-skills.ts`) from the spec's per-attribute tables (~77 skills across
+8 attributes, replacing the MVP's original flat 12-skill list). Added the `ATTRIBUTE_LEVEL_REACHED`
+achievement requirement type and two seeded achievements. New backend module: `attributes/`.
+Frontend: Skills page now groups skills under their attribute (each with its own level/XP
+header); onboarding's skill picker groups suggestions the same way with composite
+`attributeKey:skillName` selection keys (since skill names aren't globally unique anymore); new
+"Attribute Progression" section on the Analytics page; the earlier onboarding "starter quest"
+content (added in a prior change, see below) had to be reworked because it was keyed to skill
+names that no longer existed post-restructure - it's now keyed by attribute instead.
+
+Every place that previously isolated "character-level" `XPTransaction` rows by filtering
+`skillId: null` had to be updated to also filter `attributeId: null`, since attribute-level rows
+also have `skillId: null` - this affected `AchievementsService.countCompletions` and most of
+`AnalyticsService`. This is the single most important invariant introduced by this change; see
+`gameplay-systems.md` § "The centralised XP ledger".
+
+## 2026-07-19 — Onboarding starter quests
+
+Added a curated skill → starter-quest-suggestion mapping so onboarding's "add activities" step
+auto-populates a few starter quests (one per selected skill, capped at 4) instead of presenting a
+blank form - still fully editable/removable, and users can still add their own. (Superseded later
+the same day by the attribute hierarchy change above, which re-keyed this content by attribute
+instead of skill name.)
+
+## 2026-07-19 — Docker fixes
+
+Fixed three issues surfaced by running `docker compose up --build` for the first time against the
+Alpine-based backend image:
+
+1. **Prisma engine crash on Alpine.** `node:20-alpine` ships no OpenSSL, so Prisma's engine
+   binaries couldn't detect libssl and crashed at runtime ("Could not parse schema engine
+   response"), not just the warning text suggested. Fixed by installing `openssl` in the image
+   and pinning `binaryTargets = ["native", "linux-musl-openssl-3.0.x"]` in `schema.prisma`.
+2. **Seed script crash.** `prisma db seed`'s `ts-node` invocation hit an unreliable ESM/CJS
+   auto-detection in the container. Switched to running the already-compiled
+   `dist/prisma/seed.js` with plain `node` instead.
+3. **Wrong entrypoint path.** `nest build` compiles `src/` and `prisma/` together without a
+   shared root, so output lands at `dist/src/main.js`, not `dist/main.js` as the Dockerfile
+   assumed. Fixed in the Dockerfile `CMD`, the compose `command`, and `package.json`'s
+   `start:prod`.
+
+## 2026-07-19 — Initial full-stack build
+
+Built the full MVP from `mvp-spec.md`: NestJS + Prisma + PostgreSQL backend and a Next.js +
+Tailwind frontend, in a single npm-workspaces monorepo. Foundation (auth, users, skills, the
+centralised XP ledger, the achievement engine, notifications, the `ProgressionService`
+completion-workflow orchestrator) was built first and verified end-to-end against a real
+Postgres database before fanning out the remaining resource modules (quests, habits, goals,
+analytics) and frontend pages (onboarding, dashboard, skills, quests, habits, goals,
+achievements, analytics, settings) in parallel. Verified with a real headless-browser run
+covering registration → onboarding → dashboard → every page, with zero console/page errors.
+Docker Compose (Postgres + backend + frontend) and the root `README.md` were added at the end of
+this pass.
+
+---
+
+*Earlier history (if any existed before this changelog was created) is not reconstructed beyond
+what's captured above - this changelog starts from the first `docs/` commit.*
