@@ -342,19 +342,20 @@ docstring reference to "the MVP spec (section 16)." `QuestsService.complete`,
 `HabitsService.complete`, and `GoalsService.progress` all call this rather than touching
 `XpService`/`AchievementsService` themselves. It executes in this exact order:
 
-1. **Award XP.** `this.xpService.awardXp({ userId, amount, sourceType, sourceId, skillIds, note })`
-   - runs first, unconditionally. This is the only step that writes to the XP ledger and
-   recalculates levels (see sections 3-4).
+1. **Award XP.** `this.xpService.awardXp({ userId, amount, sourceType, sourceId, skillAwards,
+   attributeBonuses, note })` runs first, unconditionally. This is the only step that writes to
+   the XP ledger and recalculates levels (see sections 3-4).
 2. **Update the character's daily streak**, unless the caller passed
    `updateCharacterStreak: false` (nothing in the current codebase passes `false` - all three
    resource modules take the default `true`, so every quest/habit/goal completion currently
    updates the character streak).
-3. **Notify on level-up.** If `xpResult.character.leveledUp` is true, creates a `LEVEL_UP`
-   notification via `NotificationsService.create`.
-4. **Check achievements.** `this.achievementsService.checkAndUnlock(userId)` runs after the XP
+3. **Check achievements.** `this.achievementsService.checkAndUnlock(userId)` runs after the XP
    award and streak update, so achievement conditions see the fully up-to-date state (new level,
    new streak, new ledger rows) for this event.
-5. **Return a `CompletionResult`.**
+4. **Build and return a `CompletionResult`.**
+5. **Emit `ActivityCompletedEvent`** (fire-and-forget, via `EventEmitter2.emit` - not awaited)
+   carrying the same facts the `CompletionResult` was just built from. This step happens last and
+   is not on the response's critical path - see "Internal domain events" below.
 
 ```ts
 interface CompletionResult {
@@ -367,6 +368,40 @@ interface CompletionResult {
   streak?: { currentStreak: number; longestStreak: number };
 }
 ```
+
+### Internal domain events (Feature 0.1)
+
+The completion workflow above only inlines the steps that *feed the returned `CompletionResult`*
+- XP, streak, achievements. Everything else reacts to a single `ActivityCompletedEvent`
+(`backend/src/progression/events/activity-completed.event.ts`), emitted once per
+`completeActivity` call via `@nestjs/event-emitter`'s `EventEmitter2` (registered globally by
+`EventEmitterModule.forRoot()` in `AppModule` - a plain in-process event bus, no message broker,
+matching the roadmap's own framing that none is needed at this scale).
+
+The event carries `{ userId, sourceType, sourceId?, sourceName?, xpGained, levelUp, newLevel,
+achievementsUnlocked, completedAt }` - everything a listener would otherwise have to re-derive by
+re-querying. Emission uses `emit()`, not `emitAsync()`: `completeActivity` never awaits a
+listener, so a slow or failing listener can never delay or break the HTTP response.
+
+The one listener that exists today, `LevelUpNotificationListener`
+(`backend/src/progression/listeners/level-up-notification.listener.ts`), replaces what used to be
+an inline `if (leveledUp) await notificationsService.create(...)` step inside `completeActivity`.
+Moving it was safe specifically *because* the `LEVEL_UP` notification was never part of
+`CompletionResult` - the frontend's celebration toast (`useCelebration`) reads `levelUp`/`newLevel`
+straight from the response, independent of the notification row. The listener wraps its body in
+`try`/`catch` (logging failures via Nest's `Logger`) since nothing awaits it - an uncaught
+rejection in a fire-and-forget listener would otherwise surface as an unhandled promise rejection
+rather than a request-visible error.
+
+XP, streak, and achievement-unlocking are **not** listeners, and that's a deliberate boundary, not
+a gap to fill in later: all three feed values the caller synchronously depends on
+(`CompletionResult`), so turning them into fire-and-forget listeners would either drop that data
+from the response or force `completeActivity` to await every listener and reassemble their return
+values in a fixed order - reintroducing the same tight coupling this system exists to remove. The
+actual payoff is for *new* concerns with no such dependency: challenges, seasons, AI analysis, a
+timeline view, and similar future features (per `docs/feature-roadmap.md` § "Feature 0.1") can
+subscribe to `ACTIVITY_COMPLETED_EVENT` without `ProgressionService` - or any of
+Quests/Habits/Goals - ever being modified or even aware they exist.
 
 ### Character streak logic (`updateCharacterStreak`)
 

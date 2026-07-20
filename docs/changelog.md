@@ -4,6 +4,37 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-20 — Internal domain events
+
+Closes out "Sprint 1: Progression Foundation" (`docs/feature-roadmap.md`) - Feature 0.1, the last
+of the four Sprint 1 items (0.2 XP source metadata, ledger tests, 0.3 XP Bundles, 0.1 domain
+events).
+
+Added `@nestjs/event-emitter`, registered globally via `EventEmitterModule.forRoot()` in
+`AppModule` - an in-process event bus, no message broker, per the roadmap's own framing. New
+`ActivityCompletedEvent` (`backend/src/progression/events/`), emitted once per
+`ProgressionService.completeActivity` call, carrying `userId`, `sourceType`, `sourceId`,
+`sourceName`, `xpGained`, `levelUp`, `newLevel`, `achievementsUnlocked`, and `completedAt`.
+Emission is fire-and-forget (`emit()`, not `emitAsync()`) - nothing in `completeActivity` awaits a
+listener, so a listener can never delay or break the completion response.
+
+Moved the one existing side effect that was safe to move - the `LEVEL_UP` notification - out of
+`completeActivity`'s inline sequence and into a new `LevelUpNotificationListener`
+(`backend/src/progression/listeners/`), reacting to the same event. Safe specifically because that
+notification was never part of `CompletionResult`: the frontend's celebration toast reads
+`levelUp`/`newLevel` straight from the completion response, not from the notification. XP, streak,
+and achievement-unlocking deliberately stay inline in `completeActivity`, unchanged - all three
+feed values the response depends on, so moving them to fire-and-forget listeners would either drop
+that data or reintroduce the same ordering coupling this system exists to remove (see
+`gameplay-systems.md` § "Internal domain events (Feature 0.1)" for the full reasoning).
+
+Verified via the existing Jest suite (unaffected - `ProgressionService` isn't covered by it
+directly) plus a new real-API script: registering a user, completing a `LEGENDARY` (500 XP) quest
+from level 1 to confirm a level-up, polling `GET /notifications` for the resulting `LEVEL_UP` row
+(now created asynchronously rather than inline, so polling rather than asserting immediately),
+then completing a second, non-level-up quest and confirming no additional `LEVEL_UP` notification
+appeared.
+
 ## 2026-07-20 — XP Bundles
 
 Second slice of "Sprint 1: Progression Foundation" (`docs/feature-roadmap.md`) - Feature 0.3.

@@ -38,7 +38,10 @@ or is listed in its `imports` array *and* the providing module `exports` that pr
 
 `AppModule` itself also registers `ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }])` and
 wires `ThrottlerGuard` as a global `APP_GUARD` provider — every route is rate-limited to 120
-requests per 60-second window per client by default, on top of whatever `main.ts` sets up.
+requests per 60-second window per client by default, on top of whatever `main.ts` sets up. It
+also registers `EventEmitterModule.forRoot()` (`@nestjs/event-emitter`) — a single in-process
+event bus, no message broker — backing the internal domain-event system described under
+`ProgressionModule` below and in `docs/gameplay-systems.md` § "The completion workflow".
 
 ### Environment configuration (`backend/src/config/configuration.ts`)
 
@@ -317,24 +320,51 @@ The centralized XP ledger. No controller — it is a pure backend service consum
 ### `ProgressionModule` (`backend/src/progression/`)
 
 Orchestrates the full "complete an activity" workflow described in the project's MVP spec:
-award XP, recompute levels, update the character's daily streak, check achievements, and raise
-a level-up notification if applicable. No controller — Quests/Habits/Goals call into it instead
-of composing `XpService`/`AchievementsService`/`NotificationsService` themselves, so the
-workflow only exists in one place.
+award XP, recompute levels, update the character's daily streak, and check achievements. No
+controller — Quests/Habits/Goals call into it instead of composing
+`XpService`/`AchievementsService` themselves, so the workflow only exists in one place.
 
 - **Imports:** `XpModule`, `AchievementsModule`, `NotificationsModule`.
 - **Exports:** `ProgressionService`.
   - `completeActivity(params)` — forwards `params.skillAwards`/`params.attributeBonuses`
     straight through to `XpService.awardXp` (it has no opinion on "XP Bundles" — that's decided
     upstream by the calling Quest/Habit/Goal service), then (unless
-    `params.updateCharacterStreak === false`) updates the character's streak, creates a
-    `LEVEL_UP` notification if the character leveled up, then calls
-    `AchievementsService.checkAndUnlock`, and returns a combined `CompletionResult`
-    (xpGained, levelUp/newLevel, per-skill and per-attribute level results, unlocked achievement
-    names, streak).
+    `params.updateCharacterStreak === false`) updates the character's streak, then calls
+    `AchievementsService.checkAndUnlock`, builds a combined `CompletionResult` (xpGained,
+    levelUp/newLevel, per-skill and per-attribute level results, unlocked achievement names,
+    streak), emits an `ActivityCompletedEvent` (fire-and-forget, not awaited) carrying that same
+    data, and returns the `CompletionResult`. XP/streak/achievements stay inline because they
+    feed the returned response; the level-up notification does not, so it has moved off this
+    path entirely — see "Internal domain events" below.
   - *(private)* `updateCharacterStreak(userId)` — computes the new `currentStreak`/
     `longestStreak` via `getDayKey`/`nextStreakValue` and persists them plus `lastActivityAt`.
 - **Depended on by:** `QuestsModule`, `HabitsModule`, `GoalsModule`.
+
+#### Internal domain events (`backend/src/progression/events/`, `backend/src/progression/listeners/`)
+
+A single in-process event, `ActivityCompletedEvent` (`events/activity-completed.event.ts`),
+fired via `EventEmitter2.emit()` at the end of every `completeActivity` call. It carries
+`userId`, `sourceType`, `sourceId?`, `sourceName?`, `xpGained`, `levelUp`, `newLevel`,
+`achievementsUnlocked`, and `completedAt` — everything a listener would otherwise have to
+re-derive. Emission is fire-and-forget (`emit`, not `emitAsync`): nothing in `completeActivity`
+awaits a listener, so a broken or slow listener can never delay or fail the HTTP response.
+
+Today's one listener, `LevelUpNotificationListener`
+(`listeners/level-up-notification.listener.ts`, registered as a provider in `ProgressionModule`),
+replaces what used to be an inline `if (leveledUp) await notificationsService.create(...)` call
+in `completeActivity` — the `LEVEL_UP` notification is a pure side effect that was never part of
+`CompletionResult`, so moving it off the synchronous path changes nothing observable. It wraps
+its work in a `try`/`catch` (logging via Nest's `Logger` on failure) since nothing awaits it and
+an uncaught rejection in a fire-and-forget listener would otherwise surface as an unhandled
+promise rejection.
+
+The point of this layer, per the roadmap's own framing (`docs/feature-roadmap.md` § "Feature
+0.1"), is that future concerns — challenges, seasons, AI analysis, a timeline view — can
+subscribe to `ACTIVITY_COMPLETED_EVENT` without `ProgressionService` ever needing to know they
+exist. XP, streak, and achievement-unlocking are deliberately *not* migrated to listeners: they
+feed directly into the value `completeActivity` returns, and turning them into fire-and-forget
+listeners would either break that return contract or require re-introducing the same kind of
+awaited, ordered aggregation this system exists to avoid.
 
 ### `AchievementsModule` (`backend/src/achievements/`)
 

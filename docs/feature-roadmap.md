@@ -369,7 +369,7 @@ Phase 1+ feature.
 | Ledger invariant tests (pulled forward from its Sprint 1 position) | **Done.** `common/leveling.spec.ts`, `xp/xp.service.spec.ts` - the project's first tests. |
 | 5 — XP History | **Done.** `GET /analytics/xp-history` + `/analytics/history` page. Graph/daily-weekly-monthly breakdowns from the roadmap's "should eventually support" list are not built - the existing `/analytics` XP-over-time chart already covers that need. |
 | 0.3 — XP Bundles | **Done.** Per-skill XP overrides (`QuestSkill`/`HabitSkill`/`GoalSkill.amount`) and attribute-only bonus XP (`ActivityAttributeBonus`), wired into all three creation modals via a shared `RewardBundleEditor`. See `gameplay-systems.md` § "XP Bundles: per-skill overrides and attribute-only bonuses". |
-| 0.1 — Internal domain events | Not yet built. |
+| 0.1 — Internal domain events | **Done.** `ActivityCompletedEvent` + `EventEmitter2` (`@nestjs/event-emitter`), emitted once per `ProgressionService.completeActivity` call; one listener (`LevelUpNotificationListener`) so far. See `gameplay-systems.md` § "Internal domain events (Feature 0.1)". This was Sprint 1's last item - see `docs/changelog.md` for the closing entry. |
 | Everything in Phases 1-4 | Not yet built - out of scope for Sprint 1. |
 
 **Deliberate deviation:** `eventId` was added as a real schema column (not in the original
@@ -391,3 +391,15 @@ surface and `QuestSkill`/`HabitSkill`/`GoalSkill` join tables as the single sour
 that - rather than introducing a second, parallel way to declare what a skill/attribute is
 tagged, which the generic list shape would have allowed (e.g. a reward targeting a skill the
 activity isn't otherwise tagged with).
+
+**Deliberate deviation:** Feature 0.1's diagram shows XP, Streak, Achievement, and Notifications
+as four independent branches off `ActivityCompleted`. The actual implementation only moves
+Notifications (specifically, the level-up notification) to a listener; XP, streak, and
+achievement-unlocking stay inline in `ProgressionService.completeActivity` because all three feed
+values the caller synchronously depends on (`CompletionResult`) - see `gameplay-systems.md` §
+"Internal domain events (Feature 0.1)" for why turning them into fire-and-forget listeners would
+either lose that data or require re-introducing the same coupling this system exists to remove.
+The event system's actual payoff is for *new*, response-independent concerns (challenges,
+seasons, AI analysis, a timeline view) to subscribe later without touching
+`ProgressionService`/Quests/Habits/Goals at all - not retrofitting today's four branches onto it
+unconditionally.

@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { XpService } from '../xp/xp.service';
 import { AchievementsService } from '../achievements/achievements.service';
-import { NotificationsService } from '../notifications/notifications.service';
 import { getDayKey, nextStreakValue } from '../common/period';
 import { CompleteActivityParams, CompletionResult } from './progression.types';
+import { ACTIVITY_COMPLETED_EVENT, ActivityCompletedEvent } from './events/activity-completed.event';
 
 /**
  * Orchestrates the full "what happens when a user completes an activity"
@@ -13,6 +14,13 @@ import { CompleteActivityParams, CompletionResult } from './progression.types';
  * raise notifications. Quests/Habits/Goals services should call this
  * instead of touching XpService/AchievementsService directly, so the
  * workflow stays centralised in one place.
+ *
+ * XP, streak, and achievements stay inline here because they feed directly
+ * into the `CompletionResult` returned to the caller. Side effects that
+ * *don't* need to shape that response (the level-up notification, and any
+ * future listener - challenges, seasons, AI analysis, a timeline view) hang
+ * off the `ActivityCompletedEvent` emitted at the end instead, via
+ * `@nestjs/event-emitter`, so this service doesn't need to know they exist.
  */
 @Injectable()
 export class ProgressionService {
@@ -20,7 +28,7 @@ export class ProgressionService {
     private readonly prisma: PrismaService,
     private readonly xpService: XpService,
     private readonly achievementsService: AchievementsService,
-    private readonly notificationsService: NotificationsService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async completeActivity(params: CompleteActivityParams): Promise<CompletionResult> {
@@ -40,18 +48,9 @@ export class ProgressionService {
         ? undefined
         : await this.updateCharacterStreak(params.userId);
 
-    if (xpResult.character.leveledUp) {
-      await this.notificationsService.create(
-        params.userId,
-        'LEVEL_UP',
-        'Level up!',
-        `You reached Level ${xpResult.character.newLevel}.`,
-      );
-    }
-
     const unlockedAchievements = await this.achievementsService.checkAndUnlock(params.userId);
 
-    return {
+    const result: CompletionResult = {
       xpGained: xpResult.xpGained,
       levelUp: xpResult.character.leveledUp,
       newLevel: xpResult.character.newLevel,
@@ -68,6 +67,23 @@ export class ProgressionService {
       achievementsUnlocked: unlockedAchievements.map((achievement) => achievement.name),
       streak,
     };
+
+    this.eventEmitter.emit(
+      ACTIVITY_COMPLETED_EVENT,
+      new ActivityCompletedEvent(
+        params.userId,
+        params.sourceType,
+        result.xpGained,
+        result.levelUp,
+        result.newLevel,
+        result.achievementsUnlocked,
+        new Date(),
+        params.sourceId,
+        params.sourceName,
+      ),
+    );
+
+    return result;
   }
 
   private async updateCharacterStreak(userId: string) {
