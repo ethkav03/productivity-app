@@ -48,17 +48,18 @@ for exact prop shapes, read the referenced files directly.
 | `/register` | `frontend/app/(auth)/register/page.tsx` | Email + username + password registration form; on success calls `router.push('/onboarding')`. |
 | `/onboarding` | `frontend/app/onboarding/page.tsx` | 4-step first-run wizard: pick starting skills, create a goal, add starter quests/habits. |
 | `/dashboard` | `frontend/app/(app)/dashboard/page.tsx` | Home screen: streak + level/XP header, an 8-axis "Character Shape" radar chart of attribute levels, today's habits, active quests (incl. Locked/Complete/Claim Reward states; "Active Quests" card title links to `/quests`), active goals, recent achievements, activity feed. |
-| `/skills` | `frontend/app/(app)/skills/page.tsx` | Skills grouped by the 8 fixed attributes, with progress bars; add-skill modal (suggested or custom) and delete. |
-| `/skills/[id]` | `frontend/app/(app)/skills/[id]/page.tsx` | Single skill detail: rename/edit description, cumulative XP growth chart, recent XP transaction list, delete. |
+| `/skills` | `frontend/app/(app)/skills/page.tsx` | Skills grouped by the 8 fixed attributes, with progress bars (each attribute's header links to `/attributes/[id]`); add-skill modal (suggested or custom) and delete. |
+| `/skills/[id]` | `frontend/app/(app)/skills/[id]/page.tsx` | Single skill detail: rename/edit description, a "What contributes to this skill?" list of quests/habits/goals currently tagged with it (client-side filter over `GET /quests`/`GET /habits`/`GET /goals`, no dedicated endpoint), cumulative XP growth chart, recent XP transaction list, delete. The "Part of {attribute}" line links to `/attributes/[id]`. |
+| `/attributes/[id]` | `frontend/app/(app)/attributes/[id]/page.tsx` | Single attribute detail (new, Sprint 3 Feature 7): level/XP header, nested skills grid, an "Unlocked Rewards" section (`LevelReward`s scoped to this attribute, from `GET /level-rewards` + `GET /level-rewards/unlocked`, filtered client-side by `attributeKey`), cumulative XP growth chart, recent XP transaction list. Read-only - attributes have no edit/delete. |
 | `/quests` | `frontend/app/(app)/quests/page.tsx` | "Quest Board": a `ChallengesSection` (Daily/Weekly Challenge cards, polling `GET /challenges` every 5s, celebrating on completion) above Active/Completed status tabs plus a Daily/Weekly/Long-Term/System category pill-filter row (`?category=` on `GET /quests`; a category badge shows on non-Long-Term cards), create-quest modal (incl. a category picker, `RewardBundleEditor`, and a `RequirementsEditor` "Prerequisites" disclosure for level-gated quests). Locked quest cards render dimmed with a requirement checklist instead of a Complete button; completing swaps the button to "Claim Reward" (the actual XP-awarding step - see `docs/gameplay-systems.md` §§ "Level-gated quests and reward claiming" / "Quest Board and System quests" / "Daily and Weekly Challenges"). |
 | `/habits` | `frontend/app/(app)/habits/page.tsx` | Today's habits with streak counters, create-habit modal (incl. `RewardBundleEditor`), complete/pause/reactivate/delete. |
 | `/goals` | `frontend/app/(app)/goals/page.tsx` | Active/Completed goal tabs, create-goal modal (incl. `RewardBundleEditor`). |
 | `/goals/[id]` | `frontend/app/(app)/goals/[id]/page.tsx` | Single goal detail: linked quests, log-progress form (binary mark-complete or numeric value entry), delete. |
-| `/achievements` | `frontend/app/(app)/achievements/page.tsx` | All achievement definitions split into Unlocked / Locked sections, with a per-type requirement description. |
+| `/achievements` | `frontend/app/(app)/achievements/page.tsx` | An inline pill-toggle between two tabs (same pattern as the Quests page's status tabs): "Achievements" (all achievement definitions split into Unlocked / Locked, with a per-type requirement description) and "Level Rewards" (Sprint 3 Feature 6 - same Unlocked/Locked treatment for `LevelReward`s, requirement text resolved via `GET /attributes` for attribute-scoped rewards' display names). |
 | `/leaderboard` | `frontend/app/(app)/leaderboard/page.tsx` | Ranks the caller against their accepted friends: metric tabs (Overall Level / Attribute / XP Earned). Attribute mode filters via a `role="radiogroup"` of icon-only circles per attribute (categorical color, matching `AttributeDots`/Skills page), the selected one expanding into an icon+name pill; XP mode filters via a period pill row. Below that: a top-3 podium (graceful with fewer than 3 entries), a 4th-onward ranked list, and a "Manage Friends" modal (send/accept/decline/remove, plus a "Suggested Friends" section) with an unread-incoming-request badge. |
 | `/analytics` | `frontend/app/(app)/analytics/page.tsx` | Overview stat tiles, attribute progression grid, XP-over-time area chart, skill-level bar chart, activity heatmap, recent activity feed (with a "Full history" link to the page below). |
 | `/analytics/history` | `frontend/app/(app)/analytics/history/page.tsx` | Every XP event, grouped (character/skill/attribute lines per event via `GET /analytics/xp-history`), filterable by source category, grouped by calendar day, with cursor-based "Load more" (`useInfiniteQuery`). |
-| `/settings` | `frontend/app/(app)/settings/page.tsx` | Edit profile (username, avatar URL), theme toggle, account info (email, member since), log out. |
+| `/settings` | `frontend/app/(app)/settings/page.tsx` | Edit profile (username, avatar URL), a Title picker among the caller's unlocked `TITLE`-type `LevelReward`s (or "None") via `PATCH /users/me { equippedTitleId }`, theme toggle, account info (email, member since), log out. |
 | `/admin` | `frontend/app/admin/page.tsx` | Admin-only (see routing structure above). Users tab: searchable table, click a row for a detail modal (edit profile/toggle admin/delete, per-attribute + character XP adjuster, achievement grant/revoke). Friendships tab: table of every `Friendship` in the system with accept/delete, plus a create-by-username form. |
 
 ## Auth flow
@@ -210,7 +211,7 @@ Returns a memoized `celebrate(result: CompletionResult)` callback that turns a c
 into a sequence of toasts via `useToast()` (`frontend/src/components/ui/toaster.tsx`). It is
 purely a presentation helper - the doc comment on the hook is explicit that **callers remain
 responsible for invalidating the relevant TanStack Query caches** (user, skills, achievements,
-etc.) themselves; `useCelebration` does not touch the query cache.
+level-rewards, etc.) themselves; `useCelebration` does not touch the query cache.
 
 `CompletionResult` (`frontend/src/lib/types.ts`), returned by the habit `complete` endpoint, the
 goal `progress` endpoint, and the quest `claim` endpoint (as `CompletionResult[]`, one per pending
@@ -226,6 +227,7 @@ interface CompletionResult {
   skillResults: Array<{ skillId: string; leveledUp: boolean; newLevel: number }>;
   attributeResults: Array<{ attributeId: string; leveledUp: boolean; newLevel: number }>;
   achievementsUnlocked: string[];
+  rewardsUnlocked: Array<{ name: string; type: LevelRewardType }>;
   streak?: { currentStreak: number; longestStreak: number };
   eventId: string;
 }
@@ -243,10 +245,15 @@ interface CompletionResult {
    name in the toast).
 5. One toast per entry in `achievementsUnlocked` - variant `achievement`, title "Achievement
    unlocked", description is the achievement name string itself.
+6. One toast per entry in `rewardsUnlocked` (Sprint 3) - reuses the `achievement` variant with
+   different copy ("Reward unlocked") rather than a dedicated toast variant, since a level-reward
+   unlock is visually the same kind of event as an achievement unlock.
 
 Used from the dashboard, quests, habits, and goal-detail pages: each completion mutation's
-`onSuccess` invalidates the relevant query keys, calls `refreshUser()` from `useAuth()` to refresh
-the header's level/XP, and then calls `celebrate(result)`.
+`onSuccess` invalidates the relevant query keys (including `['level-rewards']`, and `['quests']`
+where not already invalidated - a `QUEST`-type level reward can auto-create a new quest on
+unlock), calls `refreshUser()` from `useAuth()` to refresh the header's level/XP/equipped-title/
+streak-protection-charges, and then calls `celebrate(result)`.
 
 Daily/Weekly Challenge completions deliberately don't go through `useCelebration` at all - a
 challenge completes as a side effect of some *other* mutation (whatever quest/habit/goal
@@ -355,8 +362,9 @@ A single shared `NAV_ITEMS` array consumed by both `Sidebar` and `MobileNav`:
 Renders `null` entirely if there is no authenticated `user`. Otherwise:
 
 - **Left**: a circular badge showing `user.level`, plus (desktop only, `hidden sm:block`) a mini
-  XP progress bar captioned `Level {level}` / `{currentXP}/{xpForNextLevel} XP`, with fill
-  percentage `(currentXP / xpForNextLevel) * 100`.
+  XP progress bar captioned `Level {level}` (appended with `` · {user.equippedTitle.name} `` in
+  the primary color when a title is equipped - Sprint 3) / `{currentXP}/{xpForNextLevel} XP`, with
+  fill percentage `(currentXP / xpForNextLevel) * 100`.
 - **Notification bell**: `GET /notifications` polled every 60s (`useQuery` with `refetchInterval:
   60_000`, `enabled: !!user`). A small red dot appears on the bell if any notification has
   `read === false`. Clicking the bell opens a dropdown panel (closes on outside click via a

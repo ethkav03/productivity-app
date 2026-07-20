@@ -4,13 +4,14 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { useAuth } from '@/hooks/use-auth';
 import { updateMe } from '@/lib/api/users';
+import { getUnlockedLevelRewards } from '@/lib/api/level-rewards';
 import { getApiErrorMessage } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
-import { FieldError, Input, Label } from '@/components/ui/input';
+import { FieldError, Input, Label, Select } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 
@@ -68,6 +69,18 @@ export default function SettingsPage() {
     }
   }
 
+  const { data: unlockedRewards } = useQuery({
+    queryKey: ['level-rewards', 'unlocked'],
+    queryFn: getUnlockedLevelRewards,
+    enabled: !!user,
+  });
+  const unlockedTitles = (unlockedRewards ?? []).filter((ur) => ur.levelReward.type === 'TITLE');
+
+  const titleMutation = useMutation({
+    mutationFn: (equippedTitleId: string | null) => updateMe({ equippedTitleId }),
+    onSuccess: (updatedUser) => setUser(updatedUser),
+  });
+
   if (!user) return null;
 
   return (
@@ -102,6 +115,34 @@ export default function SettingsPage() {
             {saved && <span className="text-sm text-success">Saved</span>}
           </div>
         </form>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Title</CardTitle>
+        </CardHeader>
+        {unlockedTitles.length === 0 ? (
+          <p className="text-sm text-muted">
+            No titles unlocked yet. Level up your character or attributes to earn one.
+          </p>
+        ) : (
+          <div>
+            <Label htmlFor="equipped-title">Displayed title</Label>
+            <Select
+              id="equipped-title"
+              value={user.equippedTitle?.id ?? ''}
+              onChange={(event) => titleMutation.mutate(event.target.value || null)}
+              disabled={titleMutation.isPending}
+            >
+              <option value="">None</option>
+              {unlockedTitles.map((ur) => (
+                <option key={ur.levelReward.id} value={ur.levelReward.id}>
+                  {ur.levelReward.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
       </Card>
 
       <Card>

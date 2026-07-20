@@ -313,7 +313,7 @@ function AttributeSection({
   return (
     <section>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+        <Link href={`/attributes/${attribute.id}`} className="flex items-center gap-3 rounded-lg hover:opacity-80">
           <div
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
             style={{ backgroundColor: attributeColor(attribute.key, 0.15), color: attributeColor(attribute.key) }}
@@ -322,7 +322,7 @@ function AttributeSection({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-foreground">{attribute.name}</h2>
+              <h2 className="text-sm font-semibold text-foreground hover:underline">{attribute.name}</h2>
               <Badge variant="primary">Lvl {attribute.level}</Badge>
             </div>
             <div className="mt-1 flex items-center gap-2">
@@ -332,7 +332,7 @@ function AttributeSection({
               </span>
             </div>
           </div>
-        </div>
+        </Link>
         <Button variant="ghost" size="sm" onClick={onAddSkill}>
           <Plus className="h-3.5 w-3.5" />
           Add skill

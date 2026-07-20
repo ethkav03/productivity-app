@@ -128,6 +128,7 @@ export default function QuestsPage() {
     onSuccess: async (results) => {
       queryClient.invalidateQueries({ queryKey: ['quests'] });
       queryClient.invalidateQueries({ queryKey: ['achievements'] });
+      queryClient.invalidateQueries({ queryKey: ['level-rewards'] });
       queryClient.invalidateQueries({ queryKey: ['analytics'] });
       // Challenge progress is driven by an async domain-event listener, so this
       // may still show stale data for a moment - ChallengesSection also polls

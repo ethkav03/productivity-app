@@ -7,9 +7,9 @@ import { CompletionResult } from '@/lib/types';
 /**
  * Turns a CompletionResult (returned by quest/habit/goal `complete` and
  * goal `progress` endpoints) into a sequence of toasts: XP gained, level up,
- * and any newly unlocked achievements. Callers are still responsible for
- * invalidating the relevant TanStack Query caches (user, skills,
- * achievements) after a completion.
+ * and any newly unlocked achievements or level rewards. Callers are still
+ * responsible for invalidating the relevant TanStack Query caches (user,
+ * skills, achievements, level-rewards) after a completion.
  */
 export function useCelebration() {
   const { push } = useToast();
@@ -40,6 +40,10 @@ export function useCelebration() {
 
       result.achievementsUnlocked.forEach((name) => {
         push({ variant: 'achievement', title: 'Achievement unlocked', description: name });
+      });
+
+      result.rewardsUnlocked.forEach((reward) => {
+        push({ variant: 'achievement', title: 'Reward unlocked', description: reward.name });
       });
     },
     [push],

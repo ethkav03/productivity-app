@@ -366,8 +366,8 @@ git branch (`feature/level-gated-quests`, `feature/quest-board`,
 `feature/daily-weekly-challenges`), each merged into `main` when done and verified. Starting with
 Sprint 3, the workflow moved to committing directly to `master` (the branch-per-feature pattern
 was explicitly reverted). Sprint 3 ("Meaningful Progression": level-up rewards, titles, perks,
-unlockable quests, skill/attribute detail pages) is in progress - its backend slice (level
-rewards engine, habit streak protection, equipped titles) is done.
+unlockable quests, skill/attribute detail pages) is complete, landed as two commits (backend
+slice, then frontend slice) straight to `master`.
 
 | Item | Status |
 | --- | --- |
@@ -380,8 +380,8 @@ rewards engine, habit streak protection, equipped titles) is done.
 | 2 — Quest Board | **Done** (`feature/quest-board`). `Quest.category` (Daily/Weekly/Long-Term/System) + a category filter added to the existing `/quests` page (not a separate page/route); auto-generated System quests via a shared neglected-attribute heuristic (`findNeglectedAttribute`, also used by Feature 3). See `gameplay-systems.md` § "Quest Board and System quests (Feature 2)". |
 | 3 — Daily and Weekly Challenges | **Done** (`feature/daily-weekly-challenges`, Sprint 2's last item). `Challenge` model, lazily generated (same heuristic as Feature 2's System quests); progress driven by a new `ChallengeProgressListener` on `ACTIVITY_COMPLETED_EVENT` - the domain-event system's first listener for a genuinely new concern, not a migrated one. See `gameplay-systems.md` § "Daily and Weekly Challenges (Feature 3)". |
 | 4 — XP Balancing and Diminishing Returns | Not yet built - not part of Sprint 2's scope (roadmap's own sprint grouping puts it under "Quest Progression" but it wasn't selected for this pass). |
-| 6 — Level-Up Rewards | **Backend done** (Sprint 3, committed straight to `master` - see "Chosen entry point" above). `LevelReward` + `UserLevelReward`, data-driven `LevelRewardsService.checkAndUnlock` mirroring the achievement engine, 5 of the roadmap's 8 reward types built (`TITLE`, `BADGE`, `STREAK_PROTECTION`, `FEATURE_UNLOCK`, `QUEST`), equippable titles via `PATCH /users/me`. Frontend (title UI, an achievements-page tab) not yet built. See `gameplay-systems.md` § "Level-up rewards (Feature 6)" and the deliberate-deviation note below. |
-| 7 — Skill and Attribute Detail Pages | Partially exists already (`/skills/[id]` has level/progress/XP/recent-activity; no "what contributes to this skill?" breakdown or unlocked-perks section yet) - full Feature 7 scope deferred to Sprint 3. |
+| 6 — Level-Up Rewards | **Done** (Sprint 3, committed straight to `master` - see "Chosen entry point" above). `LevelReward` + `UserLevelReward`, data-driven `LevelRewardsService.checkAndUnlock` mirroring the achievement engine, 5 of the roadmap's 8 reward types built (`TITLE`, `BADGE`, `STREAK_PROTECTION`, `FEATURE_UNLOCK`, `QUEST`), equippable titles via a `PATCH /users/me` field + a Settings picker + a Topbar display, and a "Level Rewards" tab on `/achievements`. See `gameplay-systems.md` § "Level-up rewards (Feature 6)" and the deliberate-deviation note below. |
+| 7 — Skill and Attribute Detail Pages | **Done** (Sprint 3). New `/attributes/[id]` route (didn't exist at all before this sprint): level/XP header, nested skills, an "Unlocked Rewards" section, XP growth chart, recent activity. `/skills/[id]` gained a "What contributes to this skill?" section (quests/habits/goals currently tagged with it, filtered client-side over existing list endpoints - no new backend endpoint needed) and its "Part of {attribute}" link now actually links to the attribute page instead of `/skills`. See `docs/frontend.md`'s route table. |
 | 8 — Intelligent Goal Decomposition | Not yet built - Sprint 4 ("Better Goals"). |
 | Everything in Phases 2-4 | Not yet built - out of scope for Sprint 2. |
 

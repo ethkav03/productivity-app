@@ -129,6 +129,9 @@ export default function HabitsPage() {
     onSuccess: async (result) => {
       queryClient.invalidateQueries({ queryKey: ['habits'] });
       queryClient.invalidateQueries({ queryKey: ['achievements'] });
+      queryClient.invalidateQueries({ queryKey: ['level-rewards'] });
+      // A QUEST-type level reward can auto-create a new SYSTEM quest on unlock.
+      queryClient.invalidateQueries({ queryKey: ['quests'] });
       queryClient.invalidateQueries({ queryKey: ['analytics'] });
       queryClient.invalidateQueries({ queryKey: ['challenges'] });
       await refreshUser();

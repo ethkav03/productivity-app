@@ -8,13 +8,16 @@ import { format, formatDistanceToNow } from 'date-fns';
 import {
   ArrowLeft,
   Brain,
+  CheckSquare,
   Compass,
   Dumbbell,
   LucideIcon,
   Palette,
   Pencil,
+  Repeat,
   Shield,
   Sparkles,
+  Target,
   Trash2,
   Users,
   Wallet,
@@ -22,6 +25,9 @@ import {
 } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { deleteSkill, getSkill, updateSkill } from '@/lib/api/skills';
+import { getQuests } from '@/lib/api/quests';
+import { getHabits } from '@/lib/api/habits';
+import { getGoals } from '@/lib/api/goals';
 import { getApiErrorMessage } from '@/lib/api-client';
 import { XPSourceType } from '@/lib/types';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
@@ -63,6 +69,9 @@ export default function SkillDetailPage({ params }: { params: { id: string } }) 
   const { push } = useToast();
 
   const skillQuery = useQuery({ queryKey: ['skills', params.id], queryFn: () => getSkill(params.id) });
+  const questsQuery = useQuery({ queryKey: ['quests', undefined, undefined], queryFn: () => getQuests() });
+  const habitsQuery = useQuery({ queryKey: ['habits'], queryFn: getHabits });
+  const goalsQuery = useQuery({ queryKey: ['goals', undefined], queryFn: () => getGoals() });
 
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState('');
@@ -103,6 +112,20 @@ export default function SkillDetailPage({ params }: { params: { id: string } }) 
       return { date: tx.createdAt, cumulative };
     });
   }, [skillQuery.data?.recentActivity]);
+
+  const contributingQuests = useMemo(
+    () => (questsQuery.data ?? []).filter((quest) => quest.skills.some((s) => s.id === params.id)),
+    [questsQuery.data, params.id],
+  );
+  const contributingHabits = useMemo(
+    () => (habitsQuery.data ?? []).filter((habit) => habit.skills.some((s) => s.id === params.id)),
+    [habitsQuery.data, params.id],
+  );
+  const contributingGoals = useMemo(
+    () => (goalsQuery.data ?? []).filter((goal) => goal.skills.some((s) => s.id === params.id)),
+    [goalsQuery.data, params.id],
+  );
+  const hasContributors = contributingQuests.length > 0 || contributingHabits.length > 0 || contributingGoals.length > 0;
 
   function startEditing() {
     if (!skillQuery.data) return;
@@ -194,7 +217,7 @@ export default function SkillDetailPage({ params }: { params: { id: string } }) 
                   <Badge variant="primary">Lvl {skill.level}</Badge>
                 </div>
                 <Link
-                  href="/skills"
+                  href={`/attributes/${skill.attribute.id}`}
                   className="mt-1 inline-block text-xs text-muted hover:text-primary hover:underline"
                 >
                   Part of {skill.attribute.name}
@@ -238,6 +261,56 @@ export default function SkillDetailPage({ params }: { params: { id: string } }) 
           </div>
           <ProgressBar value={progress} size="lg" />
         </div>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>What contributes to this skill?</CardTitle>
+        </CardHeader>
+        {!hasContributors ? (
+          <p className="py-6 text-center text-sm text-muted">
+            No quests, habits, or goals are tagged with {skill.name} yet.
+          </p>
+        ) : (
+          <ul className="divide-y divide-border">
+            {contributingQuests.map((quest) => (
+              <li key={`quest-${quest.id}`}>
+                <Link
+                  href="/quests"
+                  className="flex items-center gap-3 py-2.5 text-sm text-foreground hover:text-primary"
+                >
+                  <CheckSquare className="h-4 w-4 shrink-0 text-muted" />
+                  <span className="min-w-0 flex-1 truncate">{quest.title}</span>
+                  <Badge variant="default" className="shrink-0">Quest</Badge>
+                </Link>
+              </li>
+            ))}
+            {contributingHabits.map((habit) => (
+              <li key={`habit-${habit.id}`}>
+                <Link
+                  href="/habits"
+                  className="flex items-center gap-3 py-2.5 text-sm text-foreground hover:text-primary"
+                >
+                  <Repeat className="h-4 w-4 shrink-0 text-muted" />
+                  <span className="min-w-0 flex-1 truncate">{habit.title}</span>
+                  <Badge variant="default" className="shrink-0">Habit</Badge>
+                </Link>
+              </li>
+            ))}
+            {contributingGoals.map((goal) => (
+              <li key={`goal-${goal.id}`}>
+                <Link
+                  href={`/goals/${goal.id}`}
+                  className="flex items-center gap-3 py-2.5 text-sm text-foreground hover:text-primary"
+                >
+                  <Target className="h-4 w-4 shrink-0 text-muted" />
+                  <span className="min-w-0 flex-1 truncate">{goal.title}</span>
+                  <Badge variant="default" className="shrink-0">Goal</Badge>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
       </Card>
 
       {chartData.length > 1 && (

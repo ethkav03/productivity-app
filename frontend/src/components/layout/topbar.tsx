@@ -47,7 +47,10 @@ export function Topbar() {
         </div>
         <div className="hidden min-w-[10rem] sm:block">
           <div className="flex items-center justify-between text-xs text-muted">
-            <span>Level {user.level}</span>
+            <span>
+              Level {user.level}
+              {user.equippedTitle && <span className="text-primary"> · {user.equippedTitle.name}</span>}
+            </span>
             <span>
               {user.currentXP}/{user.xpForNextLevel} XP
             </span>

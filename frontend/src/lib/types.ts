@@ -14,6 +14,8 @@ export interface PublicUser {
   longestStreak: number;
   createdAt: string;
   isAdmin: boolean;
+  equippedTitle: { id: string; name: string } | null;
+  habitStreakProtectionCharges: number;
 }
 
 export type AttributeKey =
@@ -279,12 +281,35 @@ export interface UserAchievement {
   achievement: Achievement;
 }
 
+export type LevelRewardType = 'TITLE' | 'BADGE' | 'STREAK_PROTECTION' | 'FEATURE_UNLOCK' | 'QUEST';
+
+export interface LevelReward {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  icon: string | null;
+  type: LevelRewardType;
+  attributeKey: AttributeKey | null; // null = character-level reward
+  level: number;
+  createdAt: string;
+}
+
+export interface UserLevelReward {
+  id: string;
+  userId: string;
+  levelRewardId: string;
+  unlockedAt: string;
+  levelReward: LevelReward;
+}
+
 export type NotificationType =
   | 'HABIT_REMINDER'
   | 'QUEST_DEADLINE'
   | 'STREAK_WARNING'
   | 'LEVEL_UP'
   | 'ACHIEVEMENT_UNLOCK'
+  | 'LEVEL_REWARD_UNLOCK'
   | 'GOAL_MILESTONE';
 
 export interface AppNotification {
@@ -343,7 +368,9 @@ export interface CompletionResult {
   skillResults: Array<{ skillId: string; leveledUp: boolean; newLevel: number }>;
   attributeResults: Array<{ attributeId: string; leveledUp: boolean; newLevel: number }>;
   achievementsUnlocked: string[];
+  rewardsUnlocked: Array<{ name: string; type: LevelRewardType }>;
   streak?: { currentStreak: number; longestStreak: number };
+  eventId: string;
 }
 
 export interface AnalyticsOverview {

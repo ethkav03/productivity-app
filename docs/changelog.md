@@ -4,6 +4,43 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-20 — Level-Up Rewards and Attribute Detail Pages (frontend)
+
+Frontend slice of "Sprint 3: Meaningful Progression" - Phase 1 Features 6 and 7, closing out the
+sprint. Second commit straight to `master`, on top of the backend slice earlier the same day.
+
+New `/attributes/[id]` route - didn't exist at all before this sprint, even though the backend
+endpoint (`GET /attributes/:id`) has supported it since the attribute-hierarchy migration. Mirrors
+`/skills/[id]`'s structure: header card, XP growth chart, recent activity, plus two sections new
+to this sprint - a nested skills grid and an "Unlocked Rewards" section showing `LevelReward`s
+scoped to that attribute (locked ones dimmed, same treatment as the achievements page). Linked
+from the Skills page's attribute section headers and from the skill detail page's "Part of
+{attribute}" line, which previously pointed at `/skills` (a dead link, since nothing there
+scrolled to or highlighted the right attribute) and now correctly links to the attribute's own
+page.
+
+Skill detail page gained a "What contributes to this skill?" section - quests, habits, and goals
+currently tagged with the skill. Built without any new backend endpoint: `GET /quests`,
+`GET /habits`, and `GET /goals` already return each item with its nested `skills[]`, so the page
+just fetches all three and filters client-side by skill id. Simpler than the plan's fallback
+option of adding a `skillId` query param, and sufficient since none of these lists are large
+enough for client-side filtering to matter.
+
+Achievements page restructured into two tabs via the same inline pill-toggle pattern the Quests
+page uses for its status filter: "Achievements" (unchanged) and a new "Level Rewards" tab with
+matching Unlocked/Locked sections for `LevelReward`s. Settings page gained a Title picker (a
+`<select>` of the caller's unlocked `TITLE`-type rewards, or "None") wired to
+`PATCH /users/me { equippedTitleId }`; the Topbar now shows the equipped title next to the level
+badge. `useCelebration` gained a `rewardsUnlocked` handler (reuses the `achievement` toast variant
+with different copy), and every completion mutation (quest claim, habit complete, goal progress)
+now invalidates the `level-rewards` query - and `quests`, in the habit/goal cases, since a
+`QUEST`-type reward can auto-create a new quest on unlock.
+
+Verified against real running dev servers: an API-driven setup script pushed a test account past
+several seeded reward thresholds, then a Playwright pass (light and dark themes) drove the actual
+UI - login, the new attribute page, the skill page's new section, the achievements tab switch, and
+the settings title picker round-tripping through a page reload - 30 assertions, all passing.
+
 ## 2026-07-20 — Level-Up Rewards (backend)
 
 Backend slice of "Sprint 3: Meaningful Progression" (`docs/feature-roadmap.md`) - Phase 1 Feature
