@@ -4,6 +4,31 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-20 — Fix: navigating to Settings flashed the whole app to light mode
+
+`useTheme` (`frontend/src/hooks/use-theme.ts`) is consumed by `ThemeToggle`, which only lives on
+`/settings` and the `/admin` layout - not the persistent Topbar - so every navigation to either
+page mounts a brand-new, independent instance of the hook. That instance's `useState` always
+starts at `'light'` (deliberately, to match SSR-rendered markup and avoid a hydration mismatch on
+the very first page load). A second effect, keyed on `[theme]`, ran on every mount *and* wrote
+`document.documentElement`'s `dark` class - so on mount it wrote the stale `'light'` value to the
+shared, page-wide class before the state-correction effect caught up a moment later, flashing the
+*entire app* (not just the toggle icon) to light mode for a frame on every navigation to Settings.
+
+Fixed by splitting the responsibilities: the mount effect now only ever calls `setThemeState(...)`
+to correct React's own state (for the toggle's icon), and never touches the DOM - the anti-FOUC
+inline script in `app/layout.tsx` already set `documentElement`'s class correctly before any React
+code runs. DOM writes (`classList.toggle` + `localStorage.setItem`, now factored into a shared
+`applyTheme` helper) happen only inside `setTheme`/`toggleTheme`, i.e. only in response to an
+explicit user action - never as a side effect of merely mounting.
+
+Verified with a Playwright script that attaches a `MutationObserver` to `<html>`'s `class`
+attribute before navigating from `/dashboard` (dark mode) to `/settings` via a real link click:
+zero mutations were observed during the navigation (previously, this would have caught the
+class being removed and re-added). Also verified the toggle itself still works in both
+directions, a hard reload directly on `/settings` in dark mode still renders correctly with no
+hydration warnings, and the final theme still persists to `localStorage`.
+
 ## 2026-07-20 — Internal domain events
 
 Closes out "Sprint 1: Progression Foundation" (`docs/feature-roadmap.md`) - Feature 0.1, the last

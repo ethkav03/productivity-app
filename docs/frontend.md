@@ -256,11 +256,21 @@ function useTheme(): { theme: Theme; setTheme: (t: Theme) => void; toggleTheme: 
   it prefers the stored value, falling back to `window.matchMedia('(prefers-color-scheme: dark)')`.
 - The hook's `useState` initializes to `'light'` unconditionally (to match server-rendered markup)
   and only calls `getPreferredTheme()` inside a mount `useEffect`, deliberately deferring the
-  localStorage/matchMedia read so the very first client render matches SSR output.
-- A second effect toggles the `dark` class on `document.documentElement` and writes the theme back
-  to `localStorage` whenever `theme` changes.
+  localStorage/matchMedia read so the very first client render matches SSR output. **This mount
+  effect only ever updates React state - it never touches `document.documentElement`.** Only
+  `setTheme`/`toggleTheme` (i.e. an explicit user action) write the `dark` class + `localStorage`,
+  via a shared `applyTheme(theme)` helper.
 - Consumed by `ThemeToggle` (`frontend/src/components/ui/theme-toggle.tsx`), rendered on
-  `/settings`.
+  `/settings` and in the `/admin` layout - **not** the persistent Topbar, so every navigation to
+  either page mounts a fresh, independent instance of this hook.
+- **Why the mount effect can't touch the DOM:** it once did (`document.documentElement.classList
+  .toggle('dark', theme === 'dark')` inside a second effect keyed on `[theme]`, which also ran on
+  mount). Because a fresh `ThemeToggle` mount's `useState` always starts at `'light'`, that
+  mount-time run wrote the *stale* `'light'` value to the shared, page-wide
+  `document.documentElement` class before the state-correction effect caught up a moment later -
+  flashing the entire app to light mode on every navigation to `/settings`, not just the toggle's
+  own tiny icon. Fixed by having the mount effect only ever call `setThemeState(...)`, never
+  `applyTheme(...)`.
 
 **Anti-FOUC script.** Because the `dark` class is only applied after React mounts and effects run,
 `frontend/app/layout.tsx` (the root layout) inlines a synchronous `<script>` *before*
