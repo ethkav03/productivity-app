@@ -1,7 +1,12 @@
 import { User } from '@prisma/client';
 import { calculateLevelState } from '../leveling';
 
-export function toPublicUser(user: User) {
+interface UserWithEquippedTitle extends User {
+  /** Only populated when the caller included the `equippedTitle` relation - omitted callers (e.g. auth login/register) get `null`, refreshed on the next `getMe`. */
+  equippedTitle?: { id: string; name: string } | null;
+}
+
+export function toPublicUser(user: UserWithEquippedTitle) {
   const { currentLevelXp, xpForNextLevel } = calculateLevelState(user.totalXP);
   return {
     id: user.id,
@@ -16,6 +21,8 @@ export function toPublicUser(user: User) {
     longestStreak: user.longestStreak,
     createdAt: user.createdAt,
     isAdmin: user.isAdmin,
+    equippedTitle: user.equippedTitle ?? null,
+    habitStreakProtectionCharges: user.habitStreakProtectionCharges,
   };
 }
 

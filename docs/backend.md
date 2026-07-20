@@ -85,15 +85,16 @@ listed in any other module's `imports` array.
 
 | Module | Imports (from `imports: [...]`) |
 | --- | --- |
-| `AppModule` | `ConfigModule` (global), `EventEmitterModule`, `ThrottlerModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `AttributesModule`, `SkillsModule`, `XpModule`, `ProgressionModule`, `AchievementsModule`, `NotificationsModule`, `QuestsModule`, `HabitsModule`, `GoalsModule`, `ChallengesModule`, `AnalyticsModule`, `FriendsModule`, `LeaderboardModule`, `AdminModule` |
+| `AppModule` | `ConfigModule` (global), `EventEmitterModule`, `ThrottlerModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `AttributesModule`, `SkillsModule`, `XpModule`, `ProgressionModule`, `AchievementsModule`, `LevelRewardsModule`, `NotificationsModule`, `QuestsModule`, `HabitsModule`, `GoalsModule`, `ChallengesModule`, `AnalyticsModule`, `FriendsModule`, `LeaderboardModule`, `AdminModule` |
 | `PrismaModule` | *(none — `@Global()`, exports `PrismaService` to every other module implicitly)* |
 | `AuthModule` | `PassportModule`, `JwtModule.register({})`, `AttributesModule` |
 | `UsersModule` | *(none)* |
 | `AttributesModule` | *(none)* |
 | `SkillsModule` | *(none)* |
 | `XpModule` | *(none)* |
-| `ProgressionModule` | `XpModule`, `AchievementsModule`, `NotificationsModule` |
+| `ProgressionModule` | `XpModule`, `AchievementsModule`, `LevelRewardsModule`, `NotificationsModule` |
 | `AchievementsModule` | `NotificationsModule` |
+| `LevelRewardsModule` | `NotificationsModule` |
 | `NotificationsModule` | *(none)* |
 | `QuestsModule` | `ProgressionModule`, `SkillsModule`, `AttributesModule` |
 | `HabitsModule` | `ProgressionModule`, `SkillsModule`, `AttributesModule` |
@@ -119,8 +120,11 @@ AppModule
 │   ├── XpModule
 │   ├── AchievementsModule
 │   │   └── NotificationsModule
+│   ├── LevelRewardsModule
+│   │   └── NotificationsModule
 │   └── NotificationsModule
 ├── AchievementsModule (see above)
+├── LevelRewardsModule (see above)
 ├── NotificationsModule
 ├── QuestsModule
 │   ├── ProgressionModule (see above)
@@ -149,9 +153,10 @@ AppModule
 
 `ProgressionModule` is the hub of the gameplay-facing side of the graph: it is the only module
 `QuestsModule`, `HabitsModule`, `GoalsModule`, and `ChallengesModule` import to reach `XpService`,
-`AchievementsService`, and `NotificationsService` — none of the activity modules import
-`XpModule`, `AchievementsModule`, or `NotificationsModule` directly (`GoalsModule` is the one
-exception, importing `AchievementsModule` directly too — see the Goals section).
+`AchievementsService`, `LevelRewardsService`, and `NotificationsService` — none of the activity
+modules import `XpModule`, `AchievementsModule`, `LevelRewardsModule`, or `NotificationsModule`
+directly (`GoalsModule` is the one exception, importing `AchievementsModule` directly too — see
+the Goals section).
 `ChallengesModule` only reaches `ProgressionService` indirectly, via its
 `ChallengeProgressListener` provider - it has no controller-driven path to it at all, only the
 `ACTIVITY_COMPLETED_EVENT` listener (see "Internal domain events" and the Challenges section
@@ -222,9 +227,15 @@ public-facing fields.
 - **Imports:** none.
 - **Controller:** `UsersController` — `GET /api/users/me`, `PATCH /api/users/me` (both guarded).
 - **Exports:** `UsersService`.
-  - `getMe(userId)` — fetches the user or throws `NotFoundException`, returns `toPublicUser(user)`.
-  - `updateMe(userId, dto)` — validates username uniqueness if changed, updates, returns
-    `toPublicUser(user)`.
+  - `getMe(userId)` — fetches the user (including the `equippedTitle` relation via the module-level
+    `meInclude` constant) or throws `NotFoundException`, returns `toPublicUser(user)`.
+  - `updateMe(userId, dto)` — validates username uniqueness if changed; if `dto.equippedTitleId`
+    is truthy, validates via `assertOwnedUnlockedTitle` that it's a `TITLE`-type `LevelReward`
+    the caller has actually unlocked (`400 BadRequestException` otherwise) — `null` explicitly
+    unequips, omitting the field leaves it unchanged; updates (again including `equippedTitle`),
+    returns `toPublicUser(user)`.
+  - *(private)* `assertOwnedUnlockedTitle(userId, levelRewardId)` — looks up a matching
+    `UserLevelReward` row joined to a `TITLE`-type `LevelReward`; throws if none exists.
 - **Depended on by:** nothing (only `AppModule`).
 
 ### `AttributesModule` (`backend/src/attributes/`)
@@ -330,22 +341,24 @@ The centralized XP ledger. No controller — it is a pure backend service consum
 ### `ProgressionModule` (`backend/src/progression/`)
 
 Orchestrates the full "complete an activity" workflow described in the project's MVP spec:
-award XP, recompute levels, update the character's daily streak, and check achievements. No
-controller — Quests/Habits/Goals call into it instead of composing
-`XpService`/`AchievementsService` themselves, so the workflow only exists in one place.
+award XP, recompute levels, update the character's daily streak, and check
+achievements/level-rewards. No controller — Quests/Habits/Goals call into it instead of composing
+`XpService`/`AchievementsService`/`LevelRewardsService` themselves, so the workflow only exists in
+one place.
 
-- **Imports:** `XpModule`, `AchievementsModule`, `NotificationsModule`.
+- **Imports:** `XpModule`, `AchievementsModule`, `LevelRewardsModule`, `NotificationsModule`.
 - **Exports:** `ProgressionService`.
   - `completeActivity(params)` — forwards `params.skillAwards`/`params.attributeBonuses`
     straight through to `XpService.awardXp` (it has no opinion on "XP Bundles" — that's decided
     upstream by the calling Quest/Habit/Goal service), then (unless
     `params.updateCharacterStreak === false`) updates the character's streak, then calls
-    `AchievementsService.checkAndUnlock`, builds a combined `CompletionResult` (xpGained,
-    levelUp/newLevel, per-skill and per-attribute level results, unlocked achievement names,
-    streak, `eventId`), emits an `ActivityCompletedEvent` (fire-and-forget, not awaited) carrying
-    that same data, and returns the `CompletionResult`. XP/streak/achievements stay inline
-    because they feed the returned response; the level-up notification does not, so it has moved
-    off this path entirely — see "Internal domain events" below. Called directly by
+    `AchievementsService.checkAndUnlock` followed by `LevelRewardsService.checkAndUnlock`, builds
+    a combined `CompletionResult` (xpGained, levelUp/newLevel, per-skill and per-attribute level
+    results, unlocked achievement names, unlocked level rewards, streak, `eventId`), emits an
+    `ActivityCompletedEvent` (fire-and-forget, not awaited) carrying that same data, and returns
+    the `CompletionResult`. XP/streak/achievements/level-rewards stay inline because they feed
+    the returned response; the level-up notification does not, so it has moved off this path
+    entirely — see "Internal domain events" below. Called directly by
     `HabitsService`/`GoalsService`, and by `QuestsService.claimReward` (not `.complete`) and
     `ChallengeProgressListener` (not any controller).
   - *(private)* `updateCharacterStreak(userId)` — computes the new `currentStreak`/
@@ -414,6 +427,39 @@ hard-coded in TypeScript) describe a `requirementType` + `requirementValue` (and
 - **Depended on by:** `ProgressionModule` (checks after every activity completion),
   `GoalsModule` (checks directly after goal *creation*, since creation-driven achievements like
   "Goal Setter" have no XP event to hang off of).
+
+### `LevelRewardsModule` (`backend/src/level-rewards/`)
+
+Data-driven level-up reward engine ("Level-Up Rewards", Sprint 3) — mirrors `AchievementsModule`
+almost exactly, but simpler: no async per-candidate condition check is needed, just a synchronous
+filter over the caller's already-fetched character level and 8 attribute levels. Reward
+*definitions* are seeded via `prisma/seed.ts`, scoped to either the character level or one of the
+8 fixed attributes (never a user-created skill — see `docs/gameplay-systems.md` for why).
+
+- **Imports:** `NotificationsModule`.
+- **Controller:** `LevelRewardsController` — `GET /api/level-rewards` (all definitions),
+  `GET /api/level-rewards/unlocked` (this user's unlocked rewards) — both guarded, no
+  create/edit routes.
+- **Exports:** `LevelRewardsService`.
+  - `findAll()` — every reward definition, ordered by `level`.
+  - `findUnlocked(userId)` — this user's `UserLevelReward` rows with the nested `levelReward`.
+  - `checkAndUnlock(userId)` — fetches the user's current character level and all 8 attribute
+    levels, filters every not-yet-unlocked `LevelReward` whose threshold is now met
+    (`reward.attributeKey ? attributeLevel : characterLevel >= reward.level`), batch-creates
+    `UserLevelReward` rows in one `$transaction`, then applies each newly-unlocked reward's
+    per-type effect (see below) and fires a `LEVEL_REWARD_UNLOCK` notification per unlock;
+    returns the newly unlocked `LevelReward[]`.
+  - *(private)* `createRewardQuest(userId, reward)` — the `QUEST`-type effect: creates one
+    `category: SYSTEM`, `difficulty: EPIC` quest using the reward's own name/description,
+    reusing the same category Sprint 2's neglected-attribute system quests use, tagged with one
+    of the user's skills under the reward's attribute if one exists (always created even without
+    a skill to tag — unlike the neglected-attribute heuristic, this is a promised, curated
+    reward, not conditional on skill availability).
+  - Per-type effects: `STREAK_PROTECTION` increments `User.habitStreakProtectionCharges`;
+    `QUEST` calls `createRewardQuest`; `TITLE`/`BADGE`/`FEATURE_UNLOCK` are purely
+    record-keeping (the `UserLevelReward` row itself is the only effect).
+- **Depended on by:** `ProgressionModule` (checks after every activity completion, right after
+  the achievement check).
 
 ### `NotificationsModule` (`backend/src/notifications/`)
 
@@ -519,9 +565,17 @@ CRUD + completion for recurring habits, gated to once per calendar day via the
   - `complete(userId, id)` — requires `isActive`; attempts to create today's `HabitCompletion`
     row, converting a unique-constraint violation (Prisma error `P2002`) into a
     `ConflictException` ("already completed for this period"); on success, recomputes the
-    habit's own streak (`nextStreakValue`) and calls `ProgressionService.completeActivity` with
-    `sourceType: 'HABIT_COMPLETION'`, `skillAwards` derived from the habit's `habitSkills`, and
-    `attributeBonuses` from the habit's `ActivityAttributeBonus` rows.
+    habit's own streak via `nextHabitStreak` (not `nextStreakValue` directly — see below) and
+    calls `ProgressionService.completeActivity` with `sourceType: 'HABIT_COMPLETION'`,
+    `skillAwards` derived from the habit's `habitSkills`, and `attributeBonuses` from the habit's
+    `ActivityAttributeBonus` rows.
+  - *(private)* `nextHabitStreak(userId, previousPeriodKey, newPeriodKey, previousStreak)` —
+    "Perks" (Sprint 3): wraps `nextStreakValue`. If this completion would otherwise reset the
+    streak (a >1-day gap since the last completion, via `daysBetweenKeys`) and the user has a
+    `habitStreakProtectionCharges` charge available, decrements the charge and returns
+    `previousStreak + 1` instead of resetting to `1`; otherwise defers to `nextStreakValue` as
+    before. A one-time charge, granted by unlocking a `STREAK_PROTECTION`-type `LevelReward` —
+    see the `LevelRewardsModule` section and `docs/gameplay-systems.md`.
   - *(private)* `getOwnedHabit`, `validateRewardBundle` (same shape as `QuestsService`'s).
 - **Depended on by:** nothing (only `AppModule`).
 

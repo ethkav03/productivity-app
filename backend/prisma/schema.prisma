@@ -113,12 +113,21 @@ enum AttributeKey {
   WISDOM
 }
 
+enum LevelRewardType {
+  TITLE
+  BADGE
+  STREAK_PROTECTION
+  FEATURE_UNLOCK
+  QUEST
+}
+
 enum NotificationType {
   HABIT_REMINDER
   QUEST_DEADLINE
   STREAK_WARNING
   LEVEL_UP
   ACHIEVEMENT_UNLOCK
+  LEVEL_REWARD_UNLOCK
   GOAL_MILESTONE
 }
 
@@ -146,6 +155,15 @@ model User {
   longestStreak  Int       @default(0)
   lastActivityAt DateTime?
 
+  /// The unlocked TITLE-type LevelReward currently displayed, if any. Must be
+  /// one the user has actually unlocked (enforced in UsersService, not the DB).
+  equippedTitleId String?
+  /// "Perks" (Sprint 3): one-time charge grant from a STREAK_PROTECTION
+  /// LevelReward unlock, not an ongoing monthly refresh (no scheduler exists
+  /// yet). Consumed by HabitsService.complete to preserve a habit's streak
+  /// across a missed day instead of resetting it.
+  habitStreakProtectionCharges Int @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -159,9 +177,11 @@ model User {
   challenges             Challenge[]
   xpTransactions         XPTransaction[]
   userAchievements       UserAchievement[]
+  userLevelRewards       UserLevelReward[]
   notifications          Notification[]
   sentFriendRequests     Friendship[]      @relation("FriendshipRequester")
   receivedFriendRequests Friendship[]      @relation("FriendshipAddressee")
+  equippedTitle           LevelReward?     @relation("EquippedTitle", fields: [equippedTitleId], references: [id], onDelete: SetNull)
 
   @@map("users")
 }
@@ -632,6 +652,45 @@ model UserAchievement {
   @@unique([userId, achievementId])
   @@index([userId])
   @@map("user_achievements")
+}
+
+/// A globally-defined reward that unlocks at a level threshold ("Level-Up
+/// Rewards" - Sprint 3 Feature 6). Data-driven like Achievement: seeded, not
+/// user-created, evaluated by LevelRewardsService.checkAndUnlock against
+/// current level state. Scoped to the character (attributeKey: null) or one
+/// of the 8 fixed attributes - deliberately NOT per-skill, since skills are
+/// user-created and a globally-seeded reward can't sensibly target one.
+model LevelReward {
+  id           String          @id @default(uuid())
+  key          String          @unique
+  name         String
+  description  String
+  icon         String?
+  type         LevelRewardType
+  attributeKey AttributeKey?
+  /// Threshold level within this reward's scope (character level if attributeKey is null, that attribute's level otherwise).
+  level        Int
+
+  createdAt DateTime @default(now())
+
+  userLevelRewards UserLevelReward[]
+  equippedByUsers  User[]            @relation("EquippedTitle")
+
+  @@map("level_rewards")
+}
+
+model UserLevelReward {
+  id            String   @id @default(uuid())
+  userId        String
+  levelRewardId String
+  unlockedAt    DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  levelReward LevelReward @relation(fields: [levelRewardId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, levelRewardId])
+  @@index([userId])
+  @@map("user_level_rewards")
 }
 
 model Notification {

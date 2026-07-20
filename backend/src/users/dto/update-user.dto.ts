@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, IsUrl, Matches, MaxLength, MinLength } from 'class-validator';
+import { IsOptional, IsString, IsUrl, IsUUID, Matches, MaxLength, MinLength } from 'class-validator';
 
 export class UpdateUserDto {
   @ApiPropertyOptional()
@@ -15,4 +15,10 @@ export class UpdateUserDto {
   @IsString()
   @IsUrl({ require_tld: false })
   avatar?: string;
+
+  /** A TITLE-type LevelReward the caller has unlocked, or null to unequip. Omit to leave unchanged. */
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsUUID()
+  equippedTitleId?: string | null;
 }

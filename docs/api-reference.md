@@ -173,19 +173,24 @@ Request body (`UpdateUserDto`, all fields optional):
 
 ```ts
 {
-  username?: string; // 3-24 chars, /^[a-zA-Z0-9_]+$/
-  avatar?: string;   // @IsUrl({ require_tld: false }) - must be URL-shaped
+  username?: string;              // 3-24 chars, /^[a-zA-Z0-9_]+$/
+  avatar?: string;                // @IsUrl({ require_tld: false }) - must be URL-shaped
+  equippedTitleId?: string | null; // @IsUUID - a TITLE-type LevelReward the caller has unlocked, or null to unequip. Omit to leave unchanged.
 }
 ```
 
 Response: `200 OK` with the updated `PublicUser`.
 
-Errors: `409 Conflict` if `username` is already taken by another user.
+Errors: `409 Conflict` if `username` is already taken by another user; `400 Bad Request` if
+`equippedTitleId` doesn't refer to a `TITLE`-type `LevelReward` the caller has actually unlocked
+(see `GET /level-rewards/unlocked`).
 
 ### PublicUser shape
 
 Returned by `register`, `login`, `refresh`, `GET /users/me`, `PATCH /users/me`, and every
-`/admin/users` route (`backend/src/common/serializers/public-user.ts`):
+`/admin/users` route (`backend/src/common/serializers/public-user.ts`). Note: `register`/`login`/
+`refresh`/the admin routes don't eagerly fetch the `equippedTitle` relation, so `equippedTitle`
+comes back `null` there even if one is set — it's refreshed on the next `GET`/`PATCH /users/me`.
 
 ```ts
 {
@@ -201,6 +206,8 @@ Returned by `register`, `login`, `refresh`, `GET /users/me`, `PATCH /users/me`, 
   longestStreak: number;
   createdAt: string; // ISO date
   isAdmin: boolean;   // gates the /admin API and frontend route - see the Admin section below
+  equippedTitle: { id: string; name: string } | null;
+  habitStreakProtectionCharges: number;
 }
 ```
 
@@ -968,6 +975,55 @@ Response: `200 OK`, array of:
 
 ---
 
+## Level Rewards (`/level-rewards`)
+
+All routes require a Bearer token. There is no create/update/delete endpoint — reward
+*definitions* are seed data (`backend/prisma/seed.ts`); unlocking happens as a side effect of the
+completion workflow (`LevelRewardsService.checkAndUnlock`, called inline from
+`ProgressionService.completeActivity` right after the achievement check), not via a dedicated
+endpoint. See `docs/gameplay-systems.md` for the per-type unlock effects (`STREAK_PROTECTION`
+grants a habit-streak-protection charge, `QUEST` auto-creates a quest, the rest are
+record-keeping) and `docs/feature-roadmap.md` § "Feature 6" for the reward types deliberately not
+yet built (`CHALLENGE`, `THEME`, `COSMETIC`).
+
+### `GET /level-rewards`
+
+List every level reward definition in the system (not user-scoped), ordered by `level` ascending.
+
+Response: `200 OK`, array of `LevelReward`:
+
+```ts
+{
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  icon: string | null;
+  type: 'TITLE' | 'BADGE' | 'STREAK_PROTECTION' | 'FEATURE_UNLOCK' | 'QUEST';
+  attributeKey: string | null; // null = character-level reward; otherwise one of the 8 fixed attributes
+  level: number;                // threshold within that scope
+  createdAt: string;
+}
+```
+
+### `GET /level-rewards/unlocked`
+
+List level rewards the caller has unlocked, most recent first.
+
+Response: `200 OK`, array of:
+
+```ts
+{
+  id: string;
+  userId: string;
+  levelRewardId: string;
+  unlockedAt: string;
+  levelReward: LevelReward; // full nested reward definition
+}
+```
+
+---
+
 ## Notifications (`/notifications`)
 
 In-app notifications (level up, achievement unlocks, etc.), created as a side effect of the
@@ -1517,6 +1573,7 @@ interface CompletionResult {
   skillResults: Array<{ skillId: string; leveledUp: boolean; newLevel: number }>;
   attributeResults: Array<{ attributeId: string; leveledUp: boolean; newLevel: number }>;
   achievementsUnlocked: string[]; // achievement ids newly unlocked by this completion
+  rewardsUnlocked: Array<{ name: string; type: 'TITLE' | 'BADGE' | 'STREAK_PROTECTION' | 'FEATURE_UNLOCK' | 'QUEST' }>; // level rewards newly unlocked - see the Level Rewards section
   streak?: { currentStreak: number; longestStreak: number }; // character-level streak, present
                                                                // when the activity counts toward
                                                                // the daily streak (the default)

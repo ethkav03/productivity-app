@@ -361,11 +361,13 @@ Tracked here as work proceeds; see `docs/changelog.md` for the dated narrative o
 
 **Chosen entry point:** Sprint 1 (Progression Foundation) - the user chose this over the
 feature-first "Immediate MVP Expansion" path when asked, so foundation work landed before any
-Phase 1+ feature. Sprint 1 and Sprint 2 (Quest Progression) are both complete, built one roadmap
-Feature per git branch (`feature/level-gated-quests`, `feature/quest-board`,
-`feature/daily-weekly-challenges`), each merged into `main` when done and verified. Sprint 3
-("Meaningful Progression": level-up rewards, titles, perks, unlockable quests, skill/attribute
-detail pages) is next.
+Phase 1+ feature. Sprint 1 and Sprint 2 (Quest Progression) were built one roadmap Feature per
+git branch (`feature/level-gated-quests`, `feature/quest-board`,
+`feature/daily-weekly-challenges`), each merged into `main` when done and verified. Starting with
+Sprint 3, the workflow moved to committing directly to `master` (the branch-per-feature pattern
+was explicitly reverted). Sprint 3 ("Meaningful Progression": level-up rewards, titles, perks,
+unlockable quests, skill/attribute detail pages) is in progress - its backend slice (level
+rewards engine, habit streak protection, equipped titles) is done.
 
 | Item | Status |
 | --- | --- |
@@ -378,7 +380,7 @@ detail pages) is next.
 | 2 — Quest Board | **Done** (`feature/quest-board`). `Quest.category` (Daily/Weekly/Long-Term/System) + a category filter added to the existing `/quests` page (not a separate page/route); auto-generated System quests via a shared neglected-attribute heuristic (`findNeglectedAttribute`, also used by Feature 3). See `gameplay-systems.md` § "Quest Board and System quests (Feature 2)". |
 | 3 — Daily and Weekly Challenges | **Done** (`feature/daily-weekly-challenges`, Sprint 2's last item). `Challenge` model, lazily generated (same heuristic as Feature 2's System quests); progress driven by a new `ChallengeProgressListener` on `ACTIVITY_COMPLETED_EVENT` - the domain-event system's first listener for a genuinely new concern, not a migrated one. See `gameplay-systems.md` § "Daily and Weekly Challenges (Feature 3)". |
 | 4 — XP Balancing and Diminishing Returns | Not yet built - not part of Sprint 2's scope (roadmap's own sprint grouping puts it under "Quest Progression" but it wasn't selected for this pass). |
-| 6 — Level-Up Rewards | Not yet built - Sprint 3 ("Meaningful Progression"). |
+| 6 — Level-Up Rewards | **Backend done** (Sprint 3, committed straight to `master` - see "Chosen entry point" above). `LevelReward` + `UserLevelReward`, data-driven `LevelRewardsService.checkAndUnlock` mirroring the achievement engine, 5 of the roadmap's 8 reward types built (`TITLE`, `BADGE`, `STREAK_PROTECTION`, `FEATURE_UNLOCK`, `QUEST`), equippable titles via `PATCH /users/me`. Frontend (title UI, an achievements-page tab) not yet built. See `gameplay-systems.md` § "Level-up rewards (Feature 6)" and the deliberate-deviation note below. |
 | 7 — Skill and Attribute Detail Pages | Partially exists already (`/skills/[id]` has level/progress/XP/recent-activity; no "what contributes to this skill?" breakdown or unlocked-perks section yet) - full Feature 7 scope deferred to Sprint 3. |
 | 8 — Intelligent Goal Decomposition | Not yet built - Sprint 4 ("Better Goals"). |
 | Everything in Phases 2-4 | Not yet built - out of scope for Sprint 2. |
@@ -451,3 +453,19 @@ description of Challenge generation ("recent XP distribution, recent activity, u
 current goals, current level, previous challenges") - the same "narrower real heuristic, not a
 fuller analysis engine" scoping call as Feature 2's, made once and shared rather than duplicated
 into two independently-drifting narrower heuristics.
+
+**Deliberate deviation:** Feature 6 lists 8 reward types (`TITLE, BADGE, QUEST, CHALLENGE,
+FEATURE, THEME, COSMETIC, STREAK PROTECTION`); only 5 are built (`TITLE`, `BADGE`,
+`STREAK_PROTECTION`, `FEATURE_UNLOCK`, `QUEST`). `CHALLENGE`, `THEME`, and `COSMETIC` are deferred
+because each needs an entirely new subsystem with no existing content to unlock: there's no
+manual challenge-creation concept to hook a reward into (`Challenge` rows are exclusively
+system-generated, per Feature 3), no second visual theme designed, and no avatar/cosmetic-equip
+system at all - unlike the other five, which compose cleanly with what's already built. Reward
+*scope* is also narrower than the roadmap's own examples suggest only in one respect: rewards
+target the character level or one of the 8 fixed attributes (mirroring `Achievement.attributeKey`)
+but never a user-created skill, since a globally-seeded definition (written once, before any user
+exists) can't sensibly target something that isn't fixed. `STREAK_PROTECTION` is a one-time charge
+grant on unlock, not the roadmap's "protect one habit streak per month" ongoing refresh - there's
+no scheduler in the app to grant a recurring allotment. `FEATURE_UNLOCK` is purely informational
+for now, since nothing in the app is currently gated behind a feature flag to unlock. See
+`gameplay-systems.md` § "Level-up rewards (Feature 6)" for the full design.

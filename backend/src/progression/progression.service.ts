@@ -3,6 +3,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { XpService } from '../xp/xp.service';
 import { AchievementsService } from '../achievements/achievements.service';
+import { LevelRewardsService } from '../level-rewards/level-rewards.service';
 import { getDayKey, nextStreakValue } from '../common/period';
 import { CompleteActivityParams, CompletionResult } from './progression.types';
 import { ACTIVITY_COMPLETED_EVENT, ActivityCompletedEvent } from './events/activity-completed.event';
@@ -28,6 +29,7 @@ export class ProgressionService {
     private readonly prisma: PrismaService,
     private readonly xpService: XpService,
     private readonly achievementsService: AchievementsService,
+    private readonly levelRewardsService: LevelRewardsService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -49,6 +51,7 @@ export class ProgressionService {
         : await this.updateCharacterStreak(params.userId);
 
     const unlockedAchievements = await this.achievementsService.checkAndUnlock(params.userId);
+    const unlockedRewards = await this.levelRewardsService.checkAndUnlock(params.userId);
 
     const result: CompletionResult = {
       xpGained: xpResult.xpGained,
@@ -65,6 +68,7 @@ export class ProgressionService {
         newLevel: attribute.newLevel,
       })),
       achievementsUnlocked: unlockedAchievements.map((achievement) => achievement.name),
+      rewardsUnlocked: unlockedRewards.map((reward) => ({ name: reward.name, type: reward.type })),
       streak,
       eventId: xpResult.eventId,
     };

@@ -2,15 +2,16 @@
 
 This is a deep-dive reference for Life RPG's core game-mechanic logic: the XP ledger, the
 leveling formula, the completion workflow, duplicate-completion safety, the achievement engine,
-and the friends/leaderboard social layer. It documents the current backend implementation as of
-this writing, not an aspirational design. If you change any of the mechanics described here,
-update this file in the same change (see the closing note at the bottom).
+the friends/leaderboard social layer, and level-up rewards. It documents the current backend
+implementation as of this writing, not an aspirational design. If you change any of the mechanics
+described here, update this file in the same change (see the closing note at the bottom).
 
 Source files referenced throughout:
 
 - `backend/src/xp/xp.service.ts`, `backend/src/xp/xp.types.ts`
 - `backend/src/progression/progression.service.ts`, `backend/src/progression/progression.types.ts`
 - `backend/src/achievements/achievements.service.ts`
+- `backend/src/level-rewards/level-rewards.service.ts`
 - `backend/src/common/leveling.ts`, `backend/src/common/period.ts`
 - `backend/src/quests/quests.service.ts`, `backend/src/habits/habits.service.ts`,
   `backend/src/goals/goals.service.ts`
@@ -342,7 +343,7 @@ docstring reference to "the MVP spec (section 16)." `HabitsService.complete` and
 `GoalsService.progress` call this directly when their activity completes; `QuestsService` calls it
 from `claimReward`, not `complete` - completing a quest only creates a `QuestCompletion` row, and
 the actual XP award waits for a separate claim step (section 7). None of the three touch
-`XpService`/`AchievementsService` themselves. It executes in this exact order:
+`XpService`/`AchievementsService`/`LevelRewardsService` themselves. It executes in this exact order:
 
 1. **Award XP.** `this.xpService.awardXp({ userId, amount, sourceType, sourceId, skillAwards,
    attributeBonuses, note })` runs first, unconditionally. This is the only step that writes to
@@ -354,10 +355,15 @@ the actual XP award waits for a separate claim step (section 7). None of the thr
 3. **Check achievements.** `this.achievementsService.checkAndUnlock(userId)` runs after the XP
    award and streak update, so achievement conditions see the fully up-to-date state (new level,
    new streak, new ledger rows) for this event.
-4. **Build and return a `CompletionResult`.**
-5. **Emit `ActivityCompletedEvent`** (fire-and-forget, via `EventEmitter2.emit` - not awaited)
+4. **Check level rewards.** `this.levelRewardsService.checkAndUnlock(userId)` runs immediately
+   after the achievement check, for the same reason - see section 13.
+5. **Build and return a `CompletionResult`.**
+6. **Emit `ActivityCompletedEvent`** (fire-and-forget, via `EventEmitter2.emit` - not awaited)
    carrying the same facts the `CompletionResult` was just built from. This step happens last and
-   is not on the response's critical path - see "Internal domain events" below.
+   is not on the response's critical path - see "Internal domain events" below. Note:
+   `rewardsUnlocked` is **not** carried on this event (unlike `achievementsUnlocked`) - as of this
+   schema version, nothing needs to react to a level-reward unlock outside the synchronous
+   response, so it wasn't added to the event payload.
 
 ```ts
 interface CompletionResult {
@@ -367,7 +373,9 @@ interface CompletionResult {
   skillResults: Array<{ skillId: string; leveledUp: boolean; newLevel: number }>;
   attributeResults: Array<{ attributeId: string; leveledUp: boolean; newLevel: number }>;
   achievementsUnlocked: string[];   // achievement names
+  rewardsUnlocked: Array<{ name: string; type: LevelRewardType }>; // section 13
   streak?: { currentStreak: number; longestStreak: number };
+  eventId: string;
 }
 ```
 
@@ -395,11 +403,12 @@ straight from the response, independent of the notification row. The listener wr
 rejection in a fire-and-forget listener would otherwise surface as an unhandled promise rejection
 rather than a request-visible error.
 
-XP, streak, and achievement-unlocking are **not** listeners, and that's a deliberate boundary, not
-a gap to fill in later: all three feed values the caller synchronously depends on
-(`CompletionResult`), so turning them into fire-and-forget listeners would either drop that data
-from the response or force `completeActivity` to await every listener and reassemble their return
-values in a fixed order - reintroducing the same tight coupling this system exists to remove. The
+XP, streak, achievement-unlocking, and level-reward-unlocking are **not** listeners, and that's a
+deliberate boundary, not a gap to fill in later: all four feed values the caller synchronously
+depends on (`CompletionResult`), so turning them into fire-and-forget listeners would either drop
+that data from the response or force `completeActivity` to await every listener and reassemble
+their return values in a fixed order - reintroducing the same tight coupling this system exists to
+remove. The
 actual payoff is for *new* concerns with no such dependency: challenges, seasons, AI analysis, a
 timeline view, and similar future features (per `docs/feature-roadmap.md` § "Feature 0.1") can
 subscribe to `ACTIVITY_COMPLETED_EVENT` without `ProgressionService` - or any of
@@ -501,8 +510,9 @@ Backed by `@@unique([habitId, periodKey])` on `HabitCompletion`. `periodKey` is 
 key (`getDayKey()`), so at most one `HabitCompletion` row can ever exist per habit per calendar
 day, regardless of the habit's configured `frequency` (`DAILY`/`WEEKLY`/`MONTHLY` - all are keyed
 by day for completion-locking purposes, per the comment in `period.ts`). Only after the insert
-succeeds does the method compute the habit's own streak (via `nextStreakValue`, using the
-*previous* `HabitCompletion` row's `periodKey`), update the `Habit` row, and call
+succeeds does the method compute the habit's own streak (via the private `nextHabitStreak`, which
+wraps `nextStreakValue` and may consume a habit-streak-protection charge instead of resetting on a
+missed day - see section 13), update the `Habit` row, and call
 `this.progressionService.completeActivity(...)` - habits keep the instant-reward flow; unlike
 quests, there is no separate claim step.
 
@@ -838,7 +848,110 @@ resettable leaderboard reads more naturally as "who's ahead this calendar week" 
 in the last 168 hours," and a calendar boundary is what lets "this week's leaderboard" mean the
 same thing to every friend looking at it, regardless of when each of them checks.
 
-## 13. Keep this file in sync
+## 13. Level-up rewards (Feature 6)
+
+`LevelRewardsService.checkAndUnlock(userId)` (`backend/src/level-rewards/level-rewards.service.ts`)
+is the same **data-driven** pattern as `AchievementsService.checkAndUnlock` (section 10) - reward
+definitions are seeded rows, not a `switch` per reward name - but simpler, since the condition is
+always just "is a level threshold met": no async per-candidate lookup is needed, only a
+synchronous filter over the caller's already-fetched character level and 8 attribute levels.
+
+```ts
+async checkAndUnlock(userId: string): Promise<LevelReward[]> {
+  const [user, attributes, unlockedRows, allRewards] = await Promise.all([...]);
+  const attributeLevelByKey = new Map(attributes.map(a => [a.key, a.level]));
+  const newlyUnlocked = allRewards.filter(reward => {
+    if (unlockedIds.has(reward.id)) return false;
+    const currentLevel = reward.attributeKey ? (attributeLevelByKey.get(reward.attributeKey) ?? 0) : user.level;
+    return currentLevel >= reward.level;
+  });
+  // batch-create UserLevelReward rows in one $transaction, apply per-type
+  // effects, fire LEVEL_REWARD_UNLOCK notifications
+}
+```
+
+Called from **`ProgressionService.completeActivity`** only (step 4 of section 5), immediately
+after the achievement check - no other module calls it directly, unlike
+`AchievementsService.checkAndUnlock` (which `GoalsService.create` also calls for
+creation-driven achievements). There is no creation-driven level reward as of this schema
+version, so a second call site hasn't been needed.
+
+### Scope: character or a fixed attribute, never a skill
+
+`LevelReward.attributeKey` is `null` (character-level, checked against `user.level`) or one of the
+8 fixed `AttributeKey` values (checked against that `Attribute.level`) - deliberately never a
+user-created `Skill`. Skills aren't fixed the way the 8 attributes are, so a globally-seeded
+reward definition (created once, in `seed.ts`, before any user exists) can't sensibly target "a
+specific skill" the way it can target "Physical" or "Discipline" - it would have to name a skill
+that might not exist for every user, or exist multiple times under different attributes for the
+same user (section 2). This mirrors `Achievement.attributeKey`'s exact same reasoning.
+
+### `LevelRewardType` and what each does on unlock
+
+| Type | Effect |
+| --- | --- |
+| `TITLE` | Purely cosmetic. Can be equipped afterward via `PATCH /users/me { equippedTitleId }` - see below. |
+| `BADGE` | Purely record-keeping - the `UserLevelReward` row itself is the only effect. |
+| `STREAK_PROTECTION` | Increments `User.habitStreakProtectionCharges` by 1 - see "Habit streak protection" below. |
+| `FEATURE_UNLOCK` | Informational only as of this schema version. Nothing in the app is currently gated behind a feature flag, so unlocking one just adds it to the user's reward list with no functional effect - an honest placeholder for real feature-gating later (e.g. a Phase 2 skill tree). |
+| `QUEST` | Auto-creates one `Quest` via the private `createRewardQuest(userId, reward)`: `category: SYSTEM`, `difficulty: EPIC`, `type: ONE_TIME`, `xpReward: DIFFICULTY_XP.EPIC`, title/description taken from the reward's own `name`/`description`, tagged with one of the user's skills under the reward's attribute if one exists (the caller's oldest matching skill, or untagged if they have none). Reuses the same `category: SYSTEM` convention as Sprint 2's neglected-attribute quests (`QuestsService.ensureSystemQuest`, section 8), but unlike that heuristic-driven generator, this always creates the quest regardless of skill availability - it's a promised, curated reward for reaching a specific level, not a conditional suggestion. |
+
+**Deliberately not built:** the roadmap also lists `CHALLENGE`, `THEME`, and `COSMETIC` reward
+types. None exist yet because each would need an entirely new subsystem with no existing content
+to unlock: there's no manual challenge-creation concept to hook a reward into (`Challenge` rows
+are exclusively system-generated - section 9), no second visual theme designed, and no
+avatar/cosmetic-equip system at all. `TITLE`/`BADGE`/`STREAK_PROTECTION`/`FEATURE_UNLOCK`/`QUEST`
+were chosen specifically because each composes with something already built.
+
+### Equipping a title
+
+`User.equippedTitleId` (nullable FK to `LevelReward`, `onDelete: SetNull`) holds at most one
+currently-displayed title. Set via `PATCH /users/me { equippedTitleId }`
+(`UsersService.updateMe`): a truthy value is validated by the private `assertOwnedUnlockedTitle`
+(must be a `TITLE`-type `LevelReward` the caller has an actual `UserLevelReward` row for, else
+`400 BadRequestException`), `null` explicitly unequips, and omitting the field entirely leaves it
+unchanged - the same optional-vs-null convention already used elsewhere (e.g. `Quest.goalId`).
+`toPublicUser` includes the resolved `equippedTitle: { id, name } | null` - `null` for any caller
+path that doesn't eagerly fetch the relation (`register`/`login`/`refresh`/the admin routes),
+refreshed on the next `GET`/`PATCH /users/me`.
+
+### Habit streak protection
+
+A **one-time charge grant**, not an ongoing refresh - unlocking a `STREAK_PROTECTION` reward adds
+exactly 1 to `habitStreakProtectionCharges`; there's no scheduler in the app to grant a recurring
+allotment (e.g. "one per month"), matching the roadmap's own "protect one habit streak" phrasing
+literally rather than the more generous reading some analogous game systems use. Scoped to
+**habits only**, never the character-level streak (section 5's "Character streak logic") - a
+habit's own streak (`Habit.currentStreak`) and the character's overall daily streak are already
+tracked independently (section 5), and protection only ever touches the former.
+
+Consumed by the private `HabitsService.nextHabitStreak` (called from `complete`, replacing a
+direct call to `nextStreakValue`): if this completion's gap since the previous one is more than
+1 day (`daysBetweenKeys(previousPeriodKey, newPeriodKey) > 1` - i.e. the habit's streak would
+otherwise reset to `1`) **and** the user has a charge available, the charge is decremented by 1
+and the streak continues as `previousStreak + 1` instead of resetting. If no charge is available,
+or the gap wouldn't have broken the streak anyway, behavior is unchanged from before this feature
+existed (falls through to `nextStreakValue`).
+
+### Seeded level rewards
+
+From `backend/prisma/seed.ts` (`LEVEL_REWARDS`, upserted by `key`) - a modest, representative set
+covering all 5 built types and both scopes, not exhaustive content authoring:
+
+| Key | Name | Type | Scope | Threshold |
+| --- | --- | --- | --- | --- |
+| `title-beginner` | The Beginner | `TITLE` | Character | Level 3 |
+| `title-consistent` | The Consistent | `TITLE` | Character | Level 6 |
+| `physical-badge` | Getting Stronger | `BADGE` | `PHYSICAL` | Level 2 |
+| `discipline-streak-protection` | Streak Protection | `STREAK_PROTECTION` | `DISCIPLINE` | Level 3 |
+| `intelligence-study-plans` | Study Plans | `FEATURE_UNLOCK` | `INTELLIGENCE` | Level 3 |
+| `physical-epic-quest` | Epic Physical Quest | `QUEST` | `PHYSICAL` | Level 3 |
+
+That's 6 level rewards. Thresholds are deliberately low (matching the achievement seed's own low
+bar, e.g. `getting-physical` at Physical Level 2) so this is easy to reach and verify end-to-end,
+not a claim about intended pacing for a live game economy.
+
+## 14. Keep this file in sync
 
 This file documents **why** the gameplay mechanics work the way they do, not just what the code
 currently says - the reasoning here (full XP per tagged skill/attribute, the

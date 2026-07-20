@@ -10,7 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ProgressionService } from '../progression/progression.service';
 import { SkillsService } from '../skills/skills.service';
 import { AttributesService } from '../attributes/attributes.service';
-import { getDayKey, nextStreakValue } from '../common/period';
+import { daysBetweenKeys, getDayKey, nextStreakValue } from '../common/period';
 import { CreateHabitDto } from './dto/create-habit.dto';
 import { UpdateHabitDto } from './dto/update-habit.dto';
 import { AttributeBonusDto, SkillRewardOverrideDto } from '../common/dto/activity-reward.dto';
@@ -202,7 +202,7 @@ export class HabitsService {
       throw error;
     }
 
-    const newStreak = nextStreakValue(previous?.periodKey ?? null, today, habit.currentStreak);
+    const newStreak = await this.nextHabitStreak(userId, previous?.periodKey ?? null, today, habit.currentStreak);
     const longestStreak = Math.max(habit.longestStreak, newStreak);
 
     await this.prisma.habit.update({
@@ -219,6 +219,38 @@ export class HabitsService {
       skillAwards: habit.habitSkills.map((hs) => ({ skillId: hs.skillId, amount: hs.amount ?? undefined })),
       attributeBonuses: habit.attributeBonuses.map((bonus) => ({ attributeId: bonus.attributeId, amount: bonus.amount })),
     });
+  }
+
+  /**
+   * "Perks" (Sprint 3): a STREAK_PROTECTION LevelReward grants the user
+   * one-time-use `habitStreakProtectionCharges`. If this completion would
+   * otherwise reset the habit's streak (a >1-day gap since the last
+   * completion), and the user has a charge available, consume one and
+   * preserve continuity instead of resetting - matching the roadmap's
+   * "protect one habit streak" framing (scoped to habits, not the
+   * character streak; see docs/gameplay-systems.md).
+   */
+  private async nextHabitStreak(
+    userId: string,
+    previousPeriodKey: string | null,
+    newPeriodKey: string,
+    previousStreak: number,
+  ): Promise<number> {
+    const wouldBreak = previousPeriodKey !== null && daysBetweenKeys(previousPeriodKey, newPeriodKey) > 1;
+    if (!wouldBreak) {
+      return nextStreakValue(previousPeriodKey, newPeriodKey, previousStreak);
+    }
+
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    if (user.habitStreakProtectionCharges <= 0) {
+      return nextStreakValue(previousPeriodKey, newPeriodKey, previousStreak);
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { habitStreakProtectionCharges: { decrement: 1 } },
+    });
+    return previousStreak + 1;
   }
 
   private async getOwnedHabit(userId: string, id: string) {

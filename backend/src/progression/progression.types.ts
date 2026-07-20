@@ -1,4 +1,4 @@
-import { XPSourceType } from '@prisma/client';
+import { LevelRewardType, XPSourceType } from '@prisma/client';
 import { AttributeBonus, SkillAward } from '../xp/xp.types';
 
 export interface CompleteActivityParams {
@@ -24,6 +24,8 @@ export interface CompletionResult {
   skillResults: Array<{ skillId: string; leveledUp: boolean; newLevel: number }>;
   attributeResults: Array<{ attributeId: string; leveledUp: boolean; newLevel: number }>;
   achievementsUnlocked: string[];
+  /** "Level-Up Rewards" (Sprint 3) newly unlocked by this completion - see LevelRewardsService.checkAndUnlock. */
+  rewardsUnlocked: Array<{ name: string; type: LevelRewardType }>;
   streak?: { currentStreak: number; longestStreak: number };
   /** Correlates the XPTransaction rows this completion wrote - see XpAwardResult.eventId. */
   eventId: string;

@@ -4,6 +4,41 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-20 — Level-Up Rewards (backend)
+
+Backend slice of "Sprint 3: Meaningful Progression" (`docs/feature-roadmap.md`) - Phase 1 Feature
+6. First change committed straight to `master` rather than a feature branch - the
+branch-per-feature workflow adopted for Sprint 2 was explicitly reverted before this sprint
+started.
+
+Added a new `LevelReward` + `UserLevelReward` model pair (migration
+`20260720200000_level_rewards`, plus a new `LEVEL_REWARD_UNLOCK` value on `NotificationType`):
+globally-seeded, data-driven reward definitions scoped to the character level or one of the 8
+fixed attributes (never a user-created skill), unlocked per user exactly like the achievement
+engine. `LevelRewardsService.checkAndUnlock` mirrors `AchievementsService.checkAndUnlock` almost
+line-for-line but is simpler - a synchronous filter over already-fetched levels, no async
+per-candidate condition check needed - and is called inline from
+`ProgressionService.completeActivity` right after the achievement check, feeding a new
+`rewardsUnlocked` field on `CompletionResult`.
+
+Five of the roadmap's eight reward types are built: `TITLE` (equippable via a new
+`PATCH /users/me { equippedTitleId }` field, validated against the caller's own unlocked
+`UserLevelReward` rows), `BADGE` (record-keeping only), `STREAK_PROTECTION` (grants a
+`User.habitStreakProtectionCharges` charge, consumed by a new private `HabitsService.
+nextHabitStreak` the next time a habit's streak would otherwise reset on a missed day - preserving
+continuity instead of resetting), `FEATURE_UNLOCK` (informational only - nothing in the app is
+feature-gated yet), and `QUEST` (auto-creates a curated `category: SYSTEM` quest, reusing the same
+quest-creation shape Sprint 2's neglected-attribute System quests established). `CHALLENGE`,
+`THEME`, and `COSMETIC` are deliberately deferred - each would need a new subsystem with no
+existing content to unlock. See `gameplay-systems.md` § "Level-up rewards (Feature 6)" for the
+full design and `docs/feature-roadmap.md`'s Feature 6 deviation note for what's scoped out.
+
+Seeded 6 representative `LevelReward` rows (`backend/prisma/seed.ts`) covering all 5 built types
+and both scopes. Verified end-to-end against a real running dev server, including backdating a
+`HabitCompletion.periodKey` via direct Prisma access to simulate a missed day and confirm the
+streak-protection charge is actually consumed. Frontend (title UI, an achievements-page tab, the
+attribute detail page, skill page updates) is a separate, not-yet-landed slice.
+
 ## 2026-07-20 — Daily and Weekly Challenges
 
 Closes out "Sprint 2: Quest Progression" (`docs/feature-roadmap.md`) - Phase 1 Feature 3, on its

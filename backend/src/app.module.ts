@@ -12,6 +12,7 @@ import { SkillsModule } from './skills/skills.module';
 import { XpModule } from './xp/xp.module';
 import { ProgressionModule } from './progression/progression.module';
 import { AchievementsModule } from './achievements/achievements.module';
+import { LevelRewardsModule } from './level-rewards/level-rewards.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { QuestsModule } from './quests/quests.module';
 import { HabitsModule } from './habits/habits.module';
@@ -35,6 +36,7 @@ import { AdminModule } from './admin/admin.module';
     XpModule,
     ProgressionModule,
     AchievementsModule,
+    LevelRewardsModule,
     NotificationsModule,
     QuestsModule,
     HabitsModule,

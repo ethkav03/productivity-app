@@ -22,6 +22,7 @@ Ten migrations exist as of this writing:
 | `20260720170000_level_gated_quests` | Introduces `QuestRequirement` (a prerequisite a quest is locked behind - level threshold, activity count, achievement, another quest, or a goal) and `QuestCompletion` (one row per quest completion, tracking whether its reward has been claimed). Backs "level-gated quests" and "reward claiming" - see the model reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 1". |
 | `20260720180000_quest_board` | Adds `Quest.category` (`QuestCategory`, `@default(LONG_TERM)`, not nullable - existing rows backfilled to `LONG_TERM`). Backs "Quest Board" grouping (Daily/Weekly/Long-Term/System) - see the enum reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 2". |
 | `20260720190000_daily_weekly_challenges` | Adds `CHALLENGE_COMPLETION` to `XPSourceType`; introduces `Challenge` (a time-boxed, entirely system-generated Daily/Weekly objective) and its `ChallengeType`/`ChallengeStatus` enums. Backs "Daily and Weekly Challenges" - see the model reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 3". |
+| `20260720200000_level_rewards` | Adds `LEVEL_REWARD_UNLOCK` to `NotificationType`; introduces `LevelReward` (a globally-seeded, character- or attribute-scoped reward unlocked at a level threshold) and `UserLevelReward` (per-user unlock record) and the `LevelRewardType` enum; adds `User.equippedTitleId` (nullable FK to `LevelReward`, `onDelete: SetNull`) and `User.habitStreakProtectionCharges` (`Int @default(0)`). Backs "Level-Up Rewards" - see the model reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 6". |
 
 `migration_lock.toml` pins the schema to the `postgresql` provider (Prisma refuses to mix
 providers across migrations once this file exists).
@@ -44,6 +45,8 @@ User ──┬── Attribute (8 fixed, auto-created at registration)
        ├── Challenge ──── Attribute (targeted) + optional Skill (descriptive)
        ├── XPTransaction (references User, and optionally Skill and/or Attribute)
        ├── UserAchievement ──── Achievement (global, not per-user)
+       ├── UserLevelReward ──── LevelReward (global, not per-user)
+       ├── equippedTitle ──── (optional) LevelReward of type TITLE
        ├── Notification
        └── Friendship (as requester or addressee) ──── the other User
 ```
@@ -62,7 +65,10 @@ claimed yet ("reward claiming" - see `docs/gameplay-systems.md`). A `Habit`'s in
 are recorded as `HabitCompletion` rows. Every XP grant anywhere in the app is recorded as an
 `XPTransaction`, which can reference a `User` alone (character-level XP), or also a `Skill`
 and/or that skill's `Attribute` (the XP cascade). `Achievement` definitions are global (not
-per-user) and unlocked per user via `UserAchievement`. `Notification` is a simple per-user
+per-user) and unlocked per user via `UserAchievement`. `LevelReward` definitions are likewise
+global (not per-user), scoped to either the character level or one of the 8 fixed attributes
+(never a user-created skill), and unlocked per user via `UserLevelReward`; a user may optionally
+equip one unlocked `TITLE`-type `LevelReward` via `User.equippedTitleId`. `Notification` is a simple per-user
 inbox row. `Friendship` is a single row per pair of users (not duplicated per direction) linking
 two `User`s via `requester`/`addressee`; the leaderboard's comparison group for a user is
 themselves plus everyone they have an `ACCEPTED` `Friendship` row with, in either direction.
@@ -90,13 +96,16 @@ Represents an account/character: identity, auth state, and the top-level charact
 | `currentStreak` | `Int` | `@default(0)` | Current daily-activity streak. |
 | `longestStreak` | `Int` | `@default(0)` | Longest streak ever recorded. |
 | `lastActivityAt` | `DateTime?` | nullable | Last time any activity was completed; drives streak logic. |
+| `equippedTitleId` | `String?` | nullable | FK to a `TITLE`-type `LevelReward` the user has unlocked and chosen to display; `onDelete: SetNull` (the equip is silently cleared if the reward were ever deleted). Set via `PATCH /users/me`, validated against the caller's own `UserLevelReward` rows. |
+| `habitStreakProtectionCharges` | `Int` | `@default(0)` | Number of one-time habit-streak-protection charges available, granted by unlocking a `STREAK_PROTECTION`-type `LevelReward`; consumed by `HabitsService.complete` the next time a habit's streak would otherwise reset. |
 | `createdAt` | `DateTime` | `@default(now())` | |
 | `updatedAt` | `DateTime` | `@updatedAt` | |
 
 **Relations:** `skills[]`, `attributes[]`, `goals[]`, `quests[]`, `habits[]`,
 `habitCompletions[]`, `questCompletions[]`, `challenges[]`, `xpTransactions[]`,
-`userAchievements[]`, `notifications[]` — all one-to-many, all with `onDelete: Cascade` from the
-child side (deleting a `User` deletes every dependent row).
+`userAchievements[]`, `userLevelRewards[]`, `notifications[]` — all one-to-many, all with
+`onDelete: Cascade` from the child side (deleting a `User` deletes every dependent row); plus
+`equippedTitle` (`LevelReward?`, `onDelete: SetNull`, the one currently-displayed title, if any).
 
 **Constraints:** none beyond the field-level `@unique` on `email` and `username`. Maps to table
 `users`.
@@ -575,6 +584,56 @@ Maps to table `user_achievements`.
 
 ---
 
+### LevelReward
+
+A globally-defined level-up reward (not per-user) - mirrors `Achievement`'s data-driven shape.
+Scoped to either the character level (`attributeKey` null) or one of the 8 fixed attributes
+(`attributeKey` set) - deliberately never a user-created skill, since a globally-seeded
+definition can't target something that doesn't exist yet at seed time. Unlocked automatically by
+`LevelRewardsService.checkAndUnlock`, called inline from `ProgressionService.completeActivity`
+right after the achievement check.
+
+| Field | Type | Default / Nullable | Notes |
+| --- | --- | --- | --- |
+| `id` | `String` (uuid) | `@default(uuid())`, PK | |
+| `key` | `String` | unique | Stable slug used for seeding/upserts (see `backend/prisma/seed.ts`). |
+| `name` | `String` | required | Display name. |
+| `description` | `String` | required | |
+| `icon` | `String?` | nullable | |
+| `type` | `LevelRewardType` | required | See enum reference; determines the unlock's effect (if any). |
+| `attributeKey` | `AttributeKey?` | nullable | `null` = character-level reward; otherwise one of the 8 fixed attributes. |
+| `level` | `Int` | required | The threshold level, within whichever scope `attributeKey` selects. |
+| `createdAt` | `DateTime` | `@default(now())` | |
+
+**Relations:** `userLevelRewards[]` (per-user unlock records), `equippedByUsers[]` (`User[]` who
+currently have this reward set as `equippedTitleId` — only meaningful for `TITLE`-type rewards).
+
+**Constraints:** none beyond `key` uniqueness (used as the upsert key in `seed.ts`). Maps to
+table `level_rewards`.
+
+---
+
+### UserLevelReward
+
+Records that a given user has unlocked a given `LevelReward`.
+
+| Field | Type | Default / Nullable | Notes |
+| --- | --- | --- | --- |
+| `id` | `String` (uuid) | `@default(uuid())`, PK | |
+| `userId` | `String` | required | FK to `User`. |
+| `levelRewardId` | `String` | required | FK to `LevelReward`. |
+| `unlockedAt` | `DateTime` | `@default(now())` | |
+
+**Relations:** `user` (`onDelete: Cascade`), `levelReward` (`onDelete: Cascade`).
+
+**Constraints:**
+- `@@unique([userId, levelRewardId])` — a reward can only be unlocked once per user.
+- `@@index([userId])`
+
+Maps to table `user_level_rewards`.
+
+---
+
 ### Notification
 
 An in-app notification entry for a user (habit reminders, deadlines, level-ups, achievement
@@ -771,6 +830,20 @@ The 8 fixed attributes every user is given at registration (see `Attribute` mode
 | `PENDING` | Request sent, not yet responded to (the schema default). |
 | `ACCEPTED` | Addressee accepted; both users now appear in each other's leaderboard comparison group. |
 
+### LevelRewardType
+
+| Value | Meaning |
+| --- | --- |
+| `TITLE` | Purely cosmetic; can be equipped via `User.equippedTitleId`. |
+| `BADGE` | Purely record-keeping (record of the unlock itself, no functional effect). |
+| `STREAK_PROTECTION` | Grants one `User.habitStreakProtectionCharges` charge on unlock. |
+| `FEATURE_UNLOCK` | Informational only as of this schema version - nothing in the app is currently gated behind a feature flag. |
+| `QUEST` | Auto-creates a `category: SYSTEM` `Quest` on unlock, tagged to the reward's `attributeKey` if one exists (see `LevelRewardsService.createRewardQuest`). |
+
+The roadmap (`docs/feature-roadmap.md`) additionally lists `CHALLENGE`, `THEME`, and `COSMETIC`
+reward types; these are deliberately not built yet (no manual-challenge-creation, second visual
+theme, or cosmetic-equip subsystem exists to hook into) - see the roadmap's Feature 6 entry.
+
 ### NotificationType
 
 | Value | Meaning |
@@ -780,6 +853,7 @@ The 8 fixed attributes every user is given at registration (see `Attribute` mode
 | `STREAK_WARNING` | Warns the user their current streak is at risk of breaking. |
 | `LEVEL_UP` | Informs the user their character (or a skill/attribute) leveled up. |
 | `ACHIEVEMENT_UNLOCK` | Informs the user an `Achievement` was unlocked. |
+| `LEVEL_REWARD_UNLOCK` | Informs the user a `LevelReward` was unlocked. |
 | `GOAL_MILESTONE` | Informs the user of progress/milestone reached on a `Goal`. |
 
 ---
@@ -796,6 +870,13 @@ this schema version): `first-steps`, `quest-hunter` (`QUESTS_COMPLETED`); `level
 `overachiever` (`GOALS_COMPLETED`); and `habit-forming` (`HABITS_COMPLETED`). The seed script's
 own comment notes this list corresponds to MVP spec section 10 and is deliberately data-driven
 so new achievements can be added without code changes.
+
+The same script also seeds (via upsert, keyed on `LevelReward.key`) 6 `LevelReward` definitions -
+a modest, representative set covering all 5 built `LevelRewardType`s and both scopes, not
+exhaustive content authoring: `title-beginner` (character L3, `TITLE`), `title-consistent`
+(character L6, `TITLE`), `physical-badge` (Physical L2, `BADGE`),
+`discipline-streak-protection` (Discipline L3, `STREAK_PROTECTION`), `intelligence-study-plans`
+(Intelligence L3, `FEATURE_UNLOCK`), and `physical-epic-quest` (Physical L3, `QUEST`).
 
 ---
 
