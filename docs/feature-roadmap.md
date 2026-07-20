@@ -367,7 +367,10 @@ git branch (`feature/level-gated-quests`, `feature/quest-board`,
 Sprint 3, the workflow moved to committing directly to `master` (the branch-per-feature pattern
 was explicitly reverted). Sprint 3 ("Meaningful Progression": level-up rewards, titles, perks,
 unlockable quests, skill/attribute detail pages) is complete, landed as two commits (backend
-slice, then frontend slice) straight to `master`.
+slice, then frontend slice) straight to `master`. Sprint 4 ("Better Goals": goal milestones, goal
+decomposition, goal↔quest relationships, goal↔habit relationships, goal completion rewards) is in
+progress - its backend slice (milestones, `Habit.goalId`, automatic `COMPLETION`-type progress
+sync) is done.
 
 | Item | Status |
 | --- | --- |
@@ -382,7 +385,7 @@ slice, then frontend slice) straight to `master`.
 | 4 — XP Balancing and Diminishing Returns | Not yet built - not part of Sprint 2's scope (roadmap's own sprint grouping puts it under "Quest Progression" but it wasn't selected for this pass). |
 | 6 — Level-Up Rewards | **Done** (Sprint 3, committed straight to `master` - see "Chosen entry point" above). `LevelReward` + `UserLevelReward`, data-driven `LevelRewardsService.checkAndUnlock` mirroring the achievement engine, 5 of the roadmap's 8 reward types built (`TITLE`, `BADGE`, `STREAK_PROTECTION`, `FEATURE_UNLOCK`, `QUEST`), equippable titles via a `PATCH /users/me` field + a Settings picker + a Topbar display, and a "Level Rewards" tab on `/achievements`. See `gameplay-systems.md` § "Level-up rewards (Feature 6)" and the deliberate-deviation note below. |
 | 7 — Skill and Attribute Detail Pages | **Done** (Sprint 3). New `/attributes/[id]` route (didn't exist at all before this sprint): level/XP header, nested skills, an "Unlocked Rewards" section, XP growth chart, recent activity. `/skills/[id]` gained a "What contributes to this skill?" section (quests/habits/goals currently tagged with it, filtered client-side over existing list endpoints - no new backend endpoint needed) and its "Part of {attribute}" link now actually links to the attribute page instead of `/skills`. See `docs/frontend.md`'s route table. |
-| 8 — Intelligent Goal Decomposition | Not yet built - Sprint 4 ("Better Goals"). |
+| 8 — Intelligent Goal Decomposition | **Backend done** (Sprint 4 "Better Goals", committed straight to `master`). `GoalMilestone` (ordered checklist items, optional small XP reward) and `Habit.goalId` (mirroring the pre-existing `Quest.goalId`) landed; a `COMPLETION`-type goal's progress now syncs automatically from linked quest completions instead of requiring a manual re-count. The roadmap's "intelligent"/AI-driven decomposition itself is out of scope - see the deliberate-deviation note below. Frontend (goal detail page sections, habit modal goal picker) not yet built. |
 | Everything in Phases 2-4 | Not yet built - out of scope for Sprint 2. |
 
 **Deliberate deviation:** `eventId` was added as a real schema column (not in the original
@@ -469,3 +472,21 @@ grant on unlock, not the roadmap's "protect one habit streak per month" ongoing 
 no scheduler in the app to grant a recurring allotment. `FEATURE_UNLOCK` is purely informational
 for now, since nothing in the app is currently gated behind a feature flag to unlock. See
 `gameplay-systems.md` § "Level-up rewards (Feature 6)" for the full design.
+
+**Deliberate deviation:** Feature 8's actual proposal is a user creates a goal and *the system*
+breaks it into components ("Learn Architecture, Design Database, Build Backend, ..."), each
+becoming a Quest/Milestone/Habit/Sub-goal automatically. Nothing in this codebase does that kind
+of generation - there is no LLM/AI integration anywhere in the app (that's explicitly Phase 4,
+"Intelligence": AI-generated quests, an AI Game Master), and a rules-based heuristic like Quest
+Board's `findNeglectedAttribute` doesn't generalize to "read a goal's title and propose a project
+plan." What's built instead is the *structure* the roadmap's example goal shape implies -
+`Description, Target, Deadline, Skills, Milestones` (all pre-existing or new this sprint) and
+`Recommended Quests, Recommended Habits` (already possible today via `Quest.goalId`/`Habit.goalId`
+- a user links them manually) - without the "recommended"/auto-suggested part. This mirrors how
+Feature 2 and Feature 3 both scoped "a fuller analysis engine" out in favor of a narrower real
+heuristic (or, here, no heuristic at all - just the manual building blocks). `Rewards` from the
+same list is the pre-existing XP Bundle machinery (`xpReward`, `GoalSkill.amount`,
+`ActivityAttributeBonus`), unchanged this sprint. See `gameplay-systems.md` § "Better Goals:
+milestones and quest-linked auto-progress (Feature 8)" for the full design, including a real bug
+fix that shipped alongside this feature: `COMPLETION`-type goals previously never updated their
+progress automatically when a linked quest completed - they do now.

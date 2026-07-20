@@ -96,7 +96,7 @@ listed in any other module's `imports` array.
 | `AchievementsModule` | `NotificationsModule` |
 | `LevelRewardsModule` | `NotificationsModule` |
 | `NotificationsModule` | *(none)* |
-| `QuestsModule` | `ProgressionModule`, `SkillsModule`, `AttributesModule` |
+| `QuestsModule` | `ProgressionModule`, `SkillsModule`, `AttributesModule`, `GoalsModule` |
 | `HabitsModule` | `ProgressionModule`, `SkillsModule`, `AttributesModule` |
 | `GoalsModule` | `ProgressionModule`, `SkillsModule`, `AchievementsModule`, `AttributesModule` |
 | `ChallengesModule` | `ProgressionModule` |
@@ -129,7 +129,8 @@ AppModule
 ├── QuestsModule
 │   ├── ProgressionModule (see above)
 │   ├── SkillsModule
-│   └── AttributesModule (see above)
+│   ├── AttributesModule (see above)
+│   └── GoalsModule (see below)
 ├── HabitsModule
 │   ├── ProgressionModule (see above)
 │   ├── SkillsModule
@@ -156,7 +157,11 @@ AppModule
 `AchievementsService`, `LevelRewardsService`, and `NotificationsService` — none of the activity
 modules import `XpModule`, `AchievementsModule`, `LevelRewardsModule`, or `NotificationsModule`
 directly (`GoalsModule` is the one exception, importing `AchievementsModule` directly too — see
-the Goals section).
+the Goals section). `QuestsModule` also imports `GoalsModule` directly (Sprint 4) so
+`QuestsService.complete` can call `GoalsService.syncCompletionProgress` after a non-recurring
+quest completes — the one edge in this graph that isn't `ProgressionModule`-mediated, since it's
+not about the XP/streak/achievement workflow at all, just keeping a linked `COMPLETION`-type
+goal's progress in sync.
 `ChallengesModule` only reaches `ProgressionService` indirectly, via its
 `ChallengeProgressListener` provider - it has no controller-driven path to it at all, only the
 `ACTIVITY_COMPLETED_EVENT` listener (see "Internal domain events" and the Challenges section
@@ -487,7 +492,8 @@ CRUD + completion for one-time and recurring quests, optionally linked to a `Goa
 more skills (`QuestSkill` join rows), and locked behind zero or more prerequisites
 (`QuestRequirement` — "level-gated quests").
 
-- **Imports:** `ProgressionModule`, `SkillsModule`, `AttributesModule`.
+- **Imports:** `ProgressionModule`, `SkillsModule`, `AttributesModule`, `GoalsModule` (Sprint 4 -
+  see `complete` below).
 - **Controller:** `QuestsController` — `GET /api/quests` (filterable by `status`/`goalId`/
   `category`), `POST /api/quests`, `GET /api/quests/:id`, `PATCH /api/quests/:id`,
   `POST /api/quests/:id/complete`, `POST /api/quests/:id/claim`, `DELETE /api/quests/:id` — all
@@ -517,7 +523,11 @@ more skills (`QuestSkill` join rows), and locked behind zero or more prerequisit
     `[questId, periodKey]` unique constraint, caught as `P2002` and converted to `409 Conflict`
     (same pattern as `HabitsService.complete`). Creates a `QuestCompletion` row and updates the
     quest's completion state (`status`/`completedAt` or `lastCompletedAt`), but does **not**
-    award XP — see `claimReward` below.
+    award XP — see `claimReward` below. For a non-`RECURRING` quest with a `goalId` set, also
+    calls `GoalsService.syncCompletionProgress(userId, quest.goalId)` (Sprint 4, "goal↔quest
+    relationships") right after - the only call in this service that isn't
+    `ProgressionModule`-mediated, since it's about keeping a linked `COMPLETION`-type goal's
+    progress in sync, not the XP/streak/achievement workflow.
   - `claimReward(userId, id)` — finds every `QuestCompletion` with `claimedAt: null` for this
     quest, and for each (oldest first) calls `ProgressionService.completeActivity` with
     `sourceType: 'QUEST_COMPLETION'`, `skillAwards` derived from the quest's *current*
@@ -553,14 +563,17 @@ CRUD + completion for recurring habits, gated to once per calendar day via the
   guarded. (No `GET /api/habits/:id` detail route — only list + mutate.)
 - **Exports:** `HabitsService`.
   - `findAll(userId)` — all habits, each annotated with `completedToday` (looked up from
-    today's `HabitCompletion` rows in one batch query), plus `skillRewardOverrides` and
-    `attributeBonuses` ("XP Bundles" — see `docs/gameplay-systems.md`).
-  - `create(userId, dto)` — validates owned skills, defaults `frequency: DAILY`,
-    `xpReward: 10`, creates the habit and its `HabitSkill` rows (each carrying its
-    `skillRewardOverrides` entry, if any, as `amount`) and `ActivityAttributeBonus` rows.
-  - `update(userId, id, dto)` — validates ownership/skills, replaces skill links if provided,
-    updates scalar fields, re-derives `completedToday`; replaces `skillRewardOverrides` and
-    `attributeBonuses` wholesale when either is provided.
+    today's `HabitCompletion` rows in one batch query), plus `skillRewardOverrides`,
+    `attributeBonuses` ("XP Bundles" — see `docs/gameplay-systems.md`), and `goal` (resolved from
+    `goalId`, Sprint 4 - "goal↔habit relationships").
+  - `create(userId, dto)` — validates owned skills and (if set) owned `goalId` via a private
+    `assertOwnedGoal` (mirrors `QuestsService`'s), defaults `frequency: DAILY`, `xpReward: 10`,
+    creates the habit and its `HabitSkill` rows (each carrying its `skillRewardOverrides` entry,
+    if any, as `amount`) and `ActivityAttributeBonus` rows.
+  - `update(userId, id, dto)` — validates ownership/skills/goal (same `goalId` ownership check,
+    skipped when `goalId` is `undefined` or explicitly `null` since `null` means unlinking),
+    replaces skill links if provided, updates scalar fields, re-derives `completedToday`;
+    replaces `skillRewardOverrides` and `attributeBonuses` wholesale when either is provided.
   - `remove(userId, id)` — validates ownership, deletes.
   - `complete(userId, id)` — requires `isActive`; attempts to create today's `HabitCompletion`
     row, converting a unique-constraint violation (Prisma error `P2002`) into a
@@ -576,26 +589,30 @@ CRUD + completion for recurring habits, gated to once per calendar day via the
     `previousStreak + 1` instead of resetting to `1`; otherwise defers to `nextStreakValue` as
     before. A one-time charge, granted by unlocking a `STREAK_PROTECTION`-type `LevelReward` —
     see the `LevelRewardsModule` section and `docs/gameplay-systems.md`.
-  - *(private)* `getOwnedHabit`, `validateRewardBundle` (same shape as `QuestsService`'s).
+  - *(private)* `assertOwnedGoal` (identical check to `QuestsService`'s, duplicated per module),
+    `getOwnedHabit`, `validateRewardBundle` (same shape as `QuestsService`'s).
 - **Depended on by:** nothing (only `AppModule`).
 
 ### `GoalsModule` (`backend/src/goals/`)
 
 CRUD + progress tracking for goals. Goals come in three types — `BINARY` (done/not done),
 `NUMERIC` (progress toward a `targetValue`), `COMPLETION` (progress = count of linked completed
-quests) — and can optionally require linked skills.
+quests) — and can optionally require linked skills. Sprint 4 ("Better Goals") added ordered
+`GoalMilestone` checklist items and automatic `COMPLETION`-type progress syncing.
 
 - **Imports:** `ProgressionModule`, `SkillsModule`, `AchievementsModule` (the one activity
   module that imports `AchievementsModule` directly, in addition to reaching it indirectly
   through `ProgressionModule`), `AttributesModule`.
 - **Controller:** `GoalsController` — `GET /api/goals` (filterable by `status`),
   `POST /api/goals`, `GET /api/goals/:id`, `PATCH /api/goals/:id`, `POST /api/goals/:id/progress`,
-  `DELETE /api/goals/:id` — all guarded.
+  `DELETE /api/goals/:id`, plus (Sprint 4) `POST /api/goals/:id/milestones`,
+  `PATCH /api/goals/:id/milestones/:milestoneId`, `DELETE /api/goals/:id/milestones/:milestoneId`
+  — all guarded.
 - **Exports:** `GoalsService`.
   - `findAll(userId, filters)` — list with computed `progressPercent` per goal, plus
-    `skillRewardOverrides` and `attributeBonuses` ("XP Bundles" — see
-    `docs/gameplay-systems.md`).
-  - `findOne(userId, id)` — detail, adds linked `quests`.
+    `skillRewardOverrides`, `attributeBonuses` ("XP Bundles" — see
+    `docs/gameplay-systems.md`), and `milestones` (ordered ascending).
+  - `findOne(userId, id)` — detail, adds linked `quests` and (Sprint 4) linked `habits`.
   - `create(userId, dto)` — validates owned skills, requires `targetValue` for `NUMERIC`/
     `COMPLETION` types, defaults `type: BINARY`, `xpReward: 500`; creates the goal's `GoalSkill`
     rows (each carrying its `skillRewardOverrides` entry, if any, as `amount`) and
@@ -608,13 +625,33 @@ quests) — and can optionally require linked skills.
   - `remove(userId, id)` — validates ownership, deletes.
   - `progress(userId, id, dto)` — requires an `ACTIVE` goal; for `BINARY` goals any `value >= 1`
     completes it, for others `currentValue` is set directly and completion is
-    `currentValue >= targetValue`; on completion, calls `ProgressionService.completeActivity`
-    with `sourceType: 'GOAL_COMPLETION'`, `skillAwards` derived from the goal's `goalSkills`, and
-    `attributeBonuses` from the goal's `ActivityAttributeBonus` rows, returning
-    `{ goal, completion }` (otherwise just `{ goal }`).
+    `currentValue >= targetValue`; delegates to the private `finalizeGoalProgress` (below) for the
+    actual update + reward.
+  - `syncCompletionProgress(userId, goalId)` (Sprint 4) — called by `QuestsService.complete` after
+    a non-recurring quest tagged to this goal is marked `COMPLETED`. No-ops (returns `null`) unless
+    the goal is an `ACTIVE` `COMPLETION`-type goal; otherwise recounts linked completed quests and
+    delegates to `finalizeGoalProgress`, keeping `currentValue`/completion in sync automatically
+    instead of requiring a manual `POST /goals/:id/progress` call. Deliberately does not count
+    linked `Habit`s - see the method's own doc comment for why.
+  - *(private)* `finalizeGoalProgress(userId, goal, newCurrentValue, willComplete)` — shared by
+    `progress` and `syncCompletionProgress`: writes `currentValue` (and `status`/`completedAt` if
+    completing), and if completing, calls `ProgressionService.completeActivity` with
+    `sourceType: 'GOAL_COMPLETION'`, `skillAwards` derived from the goal's `goalSkills`, and
+    `attributeBonuses` from the goal's `ActivityAttributeBonus` rows. Returns
+    `{ goal, completion? }`.
+  - `addMilestone(userId, goalId, dto)` (Sprint 4) — validates goal ownership, appends a new
+    `GoalMilestone` (`order` = the goal's current milestone count).
+  - `updateMilestone(userId, goalId, milestoneId, dto)` (Sprint 4) — validates ownership of both;
+    on a `false → true` `completed` transition, awards `milestone.xpReward` via
+    `ProgressionService.completeActivity` (`sourceType: 'MILESTONE_COMPLETION'`) **only if
+    `xpReward > 0`** - a zero-reward milestone just flips the flag with no XP call, avoiding a
+    pointless zero-amount ledger row. A `true → false` transition is a plain undo - it does not
+    claw back XP already awarded. Returns `{ milestone, completion? }`.
+  - `removeMilestone(userId, goalId, milestoneId)` (Sprint 4) — validates ownership, deletes.
   - *(private)* `validateRewardBundle` (same shape as `QuestsService`'s).
-  - *(private)* `serialize`, `getOwnedGoal`.
-- **Depended on by:** nothing (only `AppModule`).
+  - *(private)* `serialize`, `getOwnedGoal`, `getOwnedMilestone` (Sprint 4).
+- **Depended on by:** `QuestsModule` (Sprint 4, via `syncCompletionProgress` - see the
+  `QuestsModule` section above).
 
 ### `ChallengesModule` (`backend/src/challenges/`)
 

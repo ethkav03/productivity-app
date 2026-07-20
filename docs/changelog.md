@@ -4,6 +4,47 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-20 — Better Goals: milestones and auto-progress (backend)
+
+Backend slice of "Sprint 4: Better Goals" (`docs/feature-roadmap.md`) - Phase 1 Feature 8.
+Continues committing straight to `master`, on top of Sprint 3's two commits earlier the same day.
+
+Added `GoalMilestone` (migration `20260720210000_better_goals`): an ordered checklist item within
+a goal, optionally carrying its own small XP reward (`xpReward`, default `0`). Marking one
+complete only runs the XP-award workflow (`sourceType: 'MILESTONE_COMPLETION'`, new on
+`XPSourceType`) when `xpReward > 0` - a plain checklist item skips it entirely, avoiding a
+zero-amount ledger row. Un-completing a milestone doesn't claw back any XP already awarded, same
+as every other completion flow in the app. Full CRUD under `/goals/:id/milestones`.
+
+Added `Habit.goalId` (nullable FK, same migration), mirroring `Quest.goalId` field-for-field -
+"goal↔habit relationships." Deliberately organizational only: a linked habit is never counted
+toward a `COMPLETION`-type goal's progress the way a linked quest is, since a habit has no
+discrete "done" state to count.
+
+Fixed a real gap in `COMPLETION`-type goals (not previously documented as a deviation - just
+missing): `currentValue` was only ever written by a manual `POST /goals/:id/progress` call,
+so a goal counting linked quests never actually updated itself as those quests completed.
+`QuestsService.complete()` now calls a new `GoalsService.syncCompletionProgress` after a
+non-recurring quest with a `goalId` finishes, keeping `currentValue` - and completion, once the
+target is hit - in sync automatically. Required `QuestsModule` to import `GoalsModule` directly,
+the one edge in the module graph that reaches across activity modules outside
+`ProgressionModule`, since this is a data-consistency fix, not part of the XP/streak/achievement
+workflow.
+
+The roadmap's "intelligent"/AI-driven goal decomposition itself is out of scope - there's no
+LLM integration anywhere in this app (that's Phase 4). What shipped is the structural
+building blocks the roadmap's own goal shape implies (milestones, quest/habit links, rewards),
+without the auto-suggestion part. See `docs/feature-roadmap.md`'s Feature 8 deviation note and
+`gameplay-systems.md` § "Better Goals" for the full reasoning.
+
+Verified end-to-end against a real running dev server: goal↔habit linking (including rejecting a
+link to a nonexistent goal, and unlinking via `goalId: null`), milestone create/complete/delete
+with and without an XP reward, and the `COMPLETION`-type auto-sync flow (creating two quests
+linked to a goal, completing them one at a time, confirming `currentValue` and eventual
+auto-completion track them without any manual progress call) - 30 assertions, all passing.
+Frontend (goal detail page's Milestones/Linked Habits sections, the habit modal's goal picker) is
+a separate, not-yet-landed slice.
+
 ## 2026-07-20 — Level-Up Rewards and Attribute Detail Pages (frontend)
 
 Frontend slice of "Sprint 3: Meaningful Progression" - Phase 1 Features 6 and 7, closing out the

@@ -62,6 +62,11 @@ export class CreateHabitDto {
   @Min(1)
   xpReward?: number;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  goalId?: string;
+
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
   @IsArray()

@@ -18,12 +18,13 @@ import { AttributeBonusDto, SkillRewardOverrideDto } from '../common/dto/activit
 const habitInclude = {
   habitSkills: { include: { skill: { include: { attribute: true } } } },
   attributeBonuses: { include: { attribute: { select: { id: true, key: true, name: true } } } },
+  goal: { select: { id: true, title: true } },
 } satisfies Prisma.HabitInclude;
 
 type HabitWithSkills = Prisma.HabitGetPayload<{ include: typeof habitInclude }>;
 
 function serializeHabit(habit: HabitWithSkills, completedToday: boolean) {
-  const { habitSkills, attributeBonuses, ...rest } = habit;
+  const { habitSkills, attributeBonuses, goal, ...rest } = habit;
   return {
     ...rest,
     skills: habitSkills.map((hs) => hs.skill),
@@ -33,6 +34,7 @@ function serializeHabit(habit: HabitWithSkills, completedToday: boolean) {
       attributeName: bonus.attribute.name,
       amount: bonus.amount,
     })),
+    goal: goal ?? null,
     completedToday,
   };
 }
@@ -86,6 +88,9 @@ export class HabitsService {
     if (dto.skillIds?.length) {
       await this.skillsService.assertOwnedSkillIds(userId, dto.skillIds);
     }
+    if (dto.goalId) {
+      await this.assertOwnedGoal(userId, dto.goalId);
+    }
     await this.validateRewardBundle(userId, dto.skillIds, dto.skillRewardOverrides, dto.attributeBonuses);
 
     const frequency = dto.frequency ?? 'DAILY';
@@ -102,6 +107,7 @@ export class HabitsService {
         timesPerWeek: dto.timesPerWeek,
         timeOfDay: dto.timeOfDay,
         xpReward,
+        goalId: dto.goalId,
         habitSkills: {
           create: (dto.skillIds ?? []).map((skillId) => ({ skillId, amount: overrideBySkillId.get(skillId) })),
         },
@@ -117,6 +123,10 @@ export class HabitsService {
 
   async update(userId: string, id: string, dto: UpdateHabitDto) {
     await this.getOwnedHabit(userId, id);
+
+    if (dto.goalId !== undefined && dto.goalId !== null) {
+      await this.assertOwnedGoal(userId, dto.goalId);
+    }
 
     if (dto.skillIds) {
       await this.skillsService.assertOwnedSkillIds(userId, dto.skillIds);
@@ -251,6 +261,12 @@ export class HabitsService {
       data: { habitStreakProtectionCharges: { decrement: 1 } },
     });
     return previousStreak + 1;
+  }
+
+  /** See QuestsService.assertOwnedGoal - identical check, duplicated per module rather than shared across a DI boundary. */
+  private async assertOwnedGoal(userId: string, goalId: string): Promise<void> {
+    const goal = await this.prisma.goal.findFirst({ where: { id: goalId, userId } });
+    if (!goal) throw new NotFoundException('Goal not found');
   }
 
   private async getOwnedHabit(userId: string, id: string) {

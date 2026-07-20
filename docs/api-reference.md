@@ -567,6 +567,12 @@ REWARD CLAIMED` state, scoped to quests only (habits/goals keep the instant-rewa
   day's key) - a recurring quest can accumulate more than one unclaimed completion if the caller
   doesn't claim every day.
 
+For a non-`RECURRING` quest with a `goalId`, this also triggers `GoalsService.
+syncCompletionProgress` (Sprint 4) - if the linked goal is an `ACTIVE` `COMPLETION`-type goal, its
+`currentValue`/`status` are updated to reflect the new count of linked completed quests (a no-op
+for any other goal type/status). See the Goals section above and
+`docs/gameplay-systems.md`.
+
 Response: `200 OK`:
 
 ```ts
@@ -630,6 +636,7 @@ Response: `200 OK`, array of `Habit`:
 {
   id: string;
   userId: string;
+  goalId: string | null;    // Sprint 4 - "goal↔habit relationships"
   title: string;
   description: string | null;
   frequency: 'DAILY' | 'DAYS_OF_WEEK' | 'TIMES_PER_WEEK' | 'MONTHLY';
@@ -645,6 +652,7 @@ Response: `200 OK`, array of `Habit`:
   skills: Skill[];           // flattened from the habitSkills join table
   skillRewardOverrides: Array<{ skillId: string; amount: number }>;  // "XP Bundles" - see POST /quests
   attributeBonuses: Array<{ attributeId: string; attributeName: string; amount: number }>;
+  goal: { id: string; title: string } | null;  // resolved from goalId, Sprint 4
   completedToday: boolean;   // derived from HabitCompletion for today's periodKey
 }
 ```
@@ -662,6 +670,7 @@ Request body (`CreateHabitDto`):
   timesPerWeek?: number;   // int, 1-14
   timeOfDay?: string;      // "HH:mm", 24-hour, matches /^([01]\d|2[0-3]):[0-5]\d$/
   xpReward?: number;       // int, >= 1. Default 10 if omitted
+  goalId?: string;         // @IsUUID, must be owned by the caller - Sprint 4
   skillIds?: string[];     // each @IsUUID, must be owned by the caller
   skillRewardOverrides?: Array<{ skillId: string; amount: number }>;  // "XP Bundles" - see POST /quests
   attributeBonuses?: Array<{ attributeId: string; amount: number }>;
@@ -670,9 +679,9 @@ Request body (`CreateHabitDto`):
 
 Response: `201 Created` with the new `Habit` (`completedToday: false`).
 
-Errors: `404 Not Found` if any `skillIds` entry or `attributeBonuses[].attributeId` isn't owned by
-the caller; `400 Bad Request` if a `skillRewardOverrides[].skillId` isn't in `skillIds`, or if any
-override/bonus `amount` is not a positive integer.
+Errors: `404 Not Found` if any `skillIds` entry, `goalId`, or `attributeBonuses[].attributeId`
+isn't owned by the caller; `400 Bad Request` if a `skillRewardOverrides[].skillId` isn't in
+`skillIds`, or if any override/bonus `amount` is not a positive integer.
 
 ### `PATCH /habits/:id`
 
@@ -687,6 +696,7 @@ Body is `UpdateHabitDto = PartialType(CreateHabitDto) & { isActive?: boolean }`:
   timesPerWeek?: number;
   timeOfDay?: string;
   xpReward?: number;
+  goalId?: string | null;  // set to link, null to unlink, omit to leave unchanged - Sprint 4
   skillIds?: string[];   // if present, fully replaces the habit's skill tags
   skillRewardOverrides?: Array<{ skillId: string; amount: number }>;  // if present, fully replaces the overrides
   attributeBonuses?: Array<{ attributeId: string; amount: number }>;  // if present, fully replaces the bonuses
@@ -696,7 +706,7 @@ Body is `UpdateHabitDto = PartialType(CreateHabitDto) & { isActive?: boolean }`:
 
 Response: `200 OK` with the updated `Habit`.
 
-Errors: `404` / `403` for the habit; `404 Not Found` for an unowned `skillIds` or
+Errors: `404` / `403` for the habit; `404 Not Found` for an unowned `skillIds`, `goalId`, or
 `attributeBonuses[].attributeId` entry; `400 Bad Request` if a `skillRewardOverrides[].skillId`
 isn't in the habit's (possibly just-updated) `skillIds`, or if any override/bonus `amount` is not
 a positive integer.
@@ -761,6 +771,7 @@ Response: `200 OK`, array of `Goal`:
   skills: Skill[];             // flattened from the goalSkills join table
   skillRewardOverrides: Array<{ skillId: string; amount: number }>;  // "XP Bundles" - see POST /quests
   attributeBonuses: Array<{ attributeId: string; attributeName: string; amount: number }>;
+  milestones: GoalMilestone[]; // ordered ascending, Sprint 4 - see the Milestones section below
   progressPercent: number;     // derived, 0-100, see rules below
 }
 ```
@@ -771,6 +782,13 @@ Response: `200 OK`, array of `Goal`:
   clamped to `[0, 100]`.
 - `NUMERIC` goals: `currentValue / targetValue * 100`, clamped to `[0, 100]`.
 - If `targetValue` is null or `<= 0` (and type isn't `BINARY`), `progressPercent` is `0`.
+
+`COMPLETION`-type goals no longer require manually reporting progress (Sprint 4) -
+`currentValue`/`status` are kept in sync automatically by `GoalsService.syncCompletionProgress`
+whenever a linked (non-recurring) `Quest` reaches `status: COMPLETED` — see `POST
+/quests/:id/complete` and `docs/gameplay-systems.md`. `POST /goals/:id/progress` still works for
+them (e.g. to correct a value manually), but nothing in the frontend calls it for `COMPLETION`
+goals anymore.
 
 ### `POST /goals`
 
@@ -806,9 +824,12 @@ positive integer.
 
 ### `GET /goals/:id`
 
-Response: `200 OK` with the goal shape plus `quests: Quest[]` — every quest linked to this goal
-(`goalId === id`), newest first, raw Prisma rows (not the full serialized quest shape used by
-`/quests`).
+Response: `200 OK` with the goal shape plus:
+- `quests: Quest[]` — every quest linked to this goal (`goalId === id`), newest first, raw Prisma
+  rows (not the full serialized quest shape used by `/quests`).
+- `habits: Habit[]` — every habit linked to this goal (`goalId === id`), newest first, raw Prisma
+  rows (Sprint 4, "goal↔habit relationships" - organizational only, not counted toward
+  `COMPLETION`-type progress).
 
 Errors: `404` / `403`.
 
@@ -872,6 +893,79 @@ Response: `200 OK`:
 ```
 
 Errors: `404` / `403`; `400 Bad Request` — `"Goal is not active"` if `status !== 'ACTIVE'`.
+
+### Milestones (`/goals/:id/milestones`)
+
+"Goal milestones" (Sprint 4) - an ordered checklist item within a goal. All routes require a
+Bearer token and goal ownership (`404 Not Found` if the goal doesn't exist or isn't the caller's).
+
+```ts
+interface GoalMilestone {
+  id: string;
+  goalId: string;
+  title: string;
+  description: string | null;
+  order: number;
+  xpReward: number;      // 0 = pure checklist item, no XP
+  completed: boolean;
+  completedAt: string | null;
+  createdAt: string;
+}
+```
+
+#### `POST /goals/:id/milestones`
+
+Request body (`CreateMilestoneDto`):
+
+```ts
+{
+  title: string;         // 2-120 chars
+  description?: string;  // max 500 chars
+  xpReward?: number;     // int, >= 0. Default 0 if omitted
+}
+```
+
+Response: `201 Created` with the new `GoalMilestone` - always appended to the end (`order` set to
+the goal's current milestone count).
+
+Errors: `404 Not Found` if the goal doesn't exist or isn't owned by the caller.
+
+#### `PATCH /goals/:id/milestones/:milestoneId`
+
+Request body (`UpdateMilestoneDto`):
+
+```ts
+{
+  title?: string;
+  description?: string;
+  xpReward?: number;
+  order?: number;         // reorder within the goal
+  completed?: boolean;    // true marks it done, false undoes it
+}
+```
+
+Marking a milestone `completed: true` (from `false`) runs the shared completion workflow
+(`sourceType: 'MILESTONE_COMPLETION'`, `amount: milestone.xpReward`) **only if `xpReward > 0`** -
+a zero-reward milestone just flips `completed`/`completedAt` with no XP awarded and no
+`CompletionResult`. Setting `completed: false` on an already-complete milestone undoes it without
+clawing back any XP already awarded.
+
+Response: `200 OK`:
+
+```ts
+{
+  milestone: GoalMilestone;
+  completion?: CompletionResult; // present only if this call awarded XP (completed: true, xpReward > 0)
+}
+```
+
+Errors: `404 Not Found` — goal or milestone doesn't exist / isn't owned by the caller.
+
+#### `DELETE /goals/:id/milestones/:milestoneId`
+
+Response: `200 OK` with `{ id: string; deleted: true }`.
+
+Errors: `404 Not Found`.
 
 ### `DELETE /goals/:id`
 

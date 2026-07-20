@@ -8,14 +8,19 @@ import { AttributesService } from '../attributes/attributes.service';
 import { CreateGoalDto } from './dto/create-goal.dto';
 import { UpdateGoalDto } from './dto/update-goal.dto';
 import { ProgressGoalDto } from './dto/progress-goal.dto';
+import { CreateMilestoneDto } from './dto/create-milestone.dto';
+import { UpdateMilestoneDto } from './dto/update-milestone.dto';
 import { AttributeBonusDto, SkillRewardOverrideDto } from '../common/dto/activity-reward.dto';
+import { CompletionResult } from '../progression/progression.types';
 
 const goalInclude = {
   goalSkills: { include: { skill: { include: { attribute: true } } } },
   attributeBonuses: { include: { attribute: { select: { id: true, key: true, name: true } } } },
+  milestones: { orderBy: { order: 'asc' } },
 } satisfies Prisma.GoalInclude;
 
 type GoalWithSkills = Prisma.GoalGetPayload<{ include: typeof goalInclude }>;
+type GoalWithRewardRelations = Prisma.GoalGetPayload<{ include: { goalSkills: true; attributeBonuses: true } }>;
 
 @Injectable()
 export class GoalsService {
@@ -64,7 +69,7 @@ export class GoalsService {
       progressPercent = Math.min(100, Math.max(0, (numerator / goal.targetValue) * 100));
     }
 
-    const { goalSkills, attributeBonuses, ...rest } = goal;
+    const { goalSkills, attributeBonuses, milestones, ...rest } = goal;
     return {
       ...rest,
       skills: goalSkills.map((goalSkill) => goalSkill.skill),
@@ -74,6 +79,7 @@ export class GoalsService {
         attributeName: bonus.attribute.name,
         amount: bonus.amount,
       })),
+      milestones,
       progressPercent,
     };
   }
@@ -95,12 +101,12 @@ export class GoalsService {
     if (!goal) throw new NotFoundException('Goal not found');
     if (goal.userId !== userId) throw new ForbiddenException();
 
-    const quests = await this.prisma.quest.findMany({
-      where: { goalId: id },
-      orderBy: { createdAt: 'desc' },
-    });
+    const [quests, habits] = await Promise.all([
+      this.prisma.quest.findMany({ where: { goalId: id }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.habit.findMany({ where: { goalId: id }, orderBy: { createdAt: 'desc' } }),
+    ]);
 
-    return { ...(await this.serialize(goal)), quests };
+    return { ...(await this.serialize(goal)), quests, habits };
   }
 
   async create(userId: string, dto: CreateGoalDto) {
@@ -229,8 +235,47 @@ export class GoalsService {
       willComplete = goal.targetValue != null && newCurrentValue >= goal.targetValue;
     }
 
+    return this.finalizeGoalProgress(userId, goal, newCurrentValue, willComplete);
+  }
+
+  /**
+   * "goal↔quest relationships" (Sprint 4): called by QuestsService right
+   * after a non-recurring quest tagged to this goal is marked COMPLETED, so a
+   * COMPLETION-type goal's currentValue - and completion - track its linked
+   * quests automatically, instead of requiring the user to manually re-count
+   * and type a number into POST /goals/:id/progress. Deliberately does NOT
+   * count linked Habits toward this - a habit has no discrete "done" state
+   * the way a quest does, so it doesn't fit the same counting model (habit
+   * links are organizational only, shown on the goal detail page).
+   * No-ops (returns null) for any goal that isn't an ACTIVE COMPLETION-type
+   * goal - this is a best-effort sync, not something the caller depends on.
+   */
+  async syncCompletionProgress(userId: string, goalId: string): Promise<CompletionResult | null> {
+    const goal = await this.prisma.goal.findUnique({
+      where: { id: goalId },
+      include: { goalSkills: true, attributeBonuses: true },
+    });
+    if (!goal || goal.userId !== userId || goal.status !== 'ACTIVE' || goal.type !== 'COMPLETION') {
+      return null;
+    }
+
+    const linkedCompletedQuestCount = await this.prisma.quest.count({
+      where: { goalId, status: 'COMPLETED' },
+    });
+    const willComplete = goal.targetValue != null && linkedCompletedQuestCount >= goal.targetValue;
+
+    const result = await this.finalizeGoalProgress(userId, goal, linkedCompletedQuestCount, willComplete);
+    return result.completion ?? null;
+  }
+
+  private async finalizeGoalProgress(
+    userId: string,
+    goal: GoalWithRewardRelations,
+    newCurrentValue: number,
+    willComplete: boolean,
+  ) {
     const updated = await this.prisma.goal.update({
-      where: { id },
+      where: { id: goal.id },
       data: {
         currentValue: newCurrentValue,
         ...(willComplete && { status: 'COMPLETED' as const, completedAt: new Date() }),
@@ -251,7 +296,75 @@ export class GoalsService {
       return { goal: await this.serialize(updated), completion };
     }
 
-    return { goal: await this.serialize(updated) };
+    return { goal: await this.serialize(updated), completion: undefined as CompletionResult | undefined };
+  }
+
+  /**
+   * "Goal milestones" (Sprint 4): a lightweight, ordered checklist item
+   * within a goal. Always appended to the end of the goal's current list -
+   * reordering happens via updateMilestone's `order` field.
+   */
+  async addMilestone(userId: string, goalId: string, dto: CreateMilestoneDto) {
+    await this.getOwnedGoal(userId, goalId);
+    const order = await this.prisma.goalMilestone.count({ where: { goalId } });
+    return this.prisma.goalMilestone.create({
+      data: { goalId, title: dto.title, description: dto.description, xpReward: dto.xpReward ?? 0, order },
+    });
+  }
+
+  /**
+   * Marking a milestone complete (false -> true) awards its xpReward via the
+   * normal completion workflow, unless xpReward is 0 (the default) - a pure
+   * checklist item skips ProgressionService entirely, avoiding a pointless
+   * zero-amount ledger row and an unnecessary achievement/level-reward
+   * re-check on every tick. Un-completing (true -> false) is a plain undo -
+   * it does not claw back any XP already awarded, matching how editing a
+   * quest/habit never retroactively adjusts past ledger rows.
+   */
+  async updateMilestone(userId: string, goalId: string, milestoneId: string, dto: UpdateMilestoneDto) {
+    await this.getOwnedGoal(userId, goalId);
+    const milestone = await this.getOwnedMilestone(goalId, milestoneId);
+
+    const becomingComplete = dto.completed === true && !milestone.completed;
+    const becomingIncomplete = dto.completed === false && milestone.completed;
+
+    const updated = await this.prisma.goalMilestone.update({
+      where: { id: milestoneId },
+      data: {
+        ...(dto.title !== undefined && { title: dto.title }),
+        ...(dto.description !== undefined && { description: dto.description }),
+        ...(dto.xpReward !== undefined && { xpReward: dto.xpReward }),
+        ...(dto.order !== undefined && { order: dto.order }),
+        ...(becomingComplete && { completed: true, completedAt: new Date() }),
+        ...(becomingIncomplete && { completed: false, completedAt: null }),
+      },
+    });
+
+    if (becomingComplete && updated.xpReward > 0) {
+      const completion = await this.progressionService.completeActivity({
+        userId,
+        amount: updated.xpReward,
+        sourceType: 'MILESTONE_COMPLETION',
+        sourceId: updated.id,
+        sourceName: updated.title,
+      });
+      return { milestone: updated, completion };
+    }
+
+    return { milestone: updated, completion: undefined as CompletionResult | undefined };
+  }
+
+  async removeMilestone(userId: string, goalId: string, milestoneId: string) {
+    await this.getOwnedGoal(userId, goalId);
+    await this.getOwnedMilestone(goalId, milestoneId);
+    await this.prisma.goalMilestone.delete({ where: { id: milestoneId } });
+    return { id: milestoneId, deleted: true };
+  }
+
+  private async getOwnedMilestone(goalId: string, milestoneId: string) {
+    const milestone = await this.prisma.goalMilestone.findUnique({ where: { id: milestoneId } });
+    if (!milestone || milestone.goalId !== goalId) throw new NotFoundException('Milestone not found');
+    return milestone;
   }
 
   private async getOwnedGoal(userId: string, id: string) {

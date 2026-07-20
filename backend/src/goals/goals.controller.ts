@@ -17,6 +17,8 @@ import { GoalsService } from './goals.service';
 import { CreateGoalDto } from './dto/create-goal.dto';
 import { UpdateGoalDto } from './dto/update-goal.dto';
 import { ProgressGoalDto } from './dto/progress-goal.dto';
+import { CreateMilestoneDto } from './dto/create-milestone.dto';
+import { UpdateMilestoneDto } from './dto/update-milestone.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser, AuthenticatedUser } from '../common/decorators/current-user.decorator';
 
@@ -56,5 +58,33 @@ export class GoalsController {
   @Delete(':id')
   remove(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
     return this.goalsService.remove(user.userId, id);
+  }
+
+  @Post(':id/milestones')
+  addMilestone(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: CreateMilestoneDto,
+  ) {
+    return this.goalsService.addMilestone(user.userId, id, dto);
+  }
+
+  @Patch(':id/milestones/:milestoneId')
+  updateMilestone(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Param('milestoneId') milestoneId: string,
+    @Body() dto: UpdateMilestoneDto,
+  ) {
+    return this.goalsService.updateMilestone(user.userId, id, milestoneId, dto);
+  }
+
+  @Delete(':id/milestones/:milestoneId')
+  removeMilestone(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Param('milestoneId') milestoneId: string,
+  ) {
+    return this.goalsService.removeMilestone(user.userId, id, milestoneId);
   }
 }

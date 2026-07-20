@@ -87,6 +87,7 @@ enum XPSourceType {
   GOAL_COMPLETION
   ACHIEVEMENT_BONUS
   CHALLENGE_COMPLETION
+  MILESTONE_COMPLETION
   CORRECTION
 }
 
@@ -157,12 +158,12 @@ model User {
 
   /// The unlocked TITLE-type LevelReward currently displayed, if any. Must be
   /// one the user has actually unlocked (enforced in UsersService, not the DB).
-  equippedTitleId String?
+  equippedTitleId              String?
   /// "Perks" (Sprint 3): one-time charge grant from a STREAK_PROTECTION
   /// LevelReward unlock, not an ongoing monthly refresh (no scheduler exists
   /// yet). Consumed by HabitsService.complete to preserve a habit's streak
   /// across a missed day instead of resetting it.
-  habitStreakProtectionCharges Int @default(0)
+  habitStreakProtectionCharges Int     @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -181,7 +182,7 @@ model User {
   notifications          Notification[]
   sentFriendRequests     Friendship[]      @relation("FriendshipRequester")
   receivedFriendRequests Friendship[]      @relation("FriendshipAddressee")
-  equippedTitle           LevelReward?     @relation("EquippedTitle", fields: [equippedTitleId], references: [id], onDelete: SetNull)
+  equippedTitle          LevelReward?      @relation("EquippedTitle", fields: [equippedTitleId], references: [id], onDelete: SetNull)
 
   @@map("users")
 }
@@ -329,9 +330,16 @@ model Goal {
 
   user              User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   quests            Quest[]
+  /// Habits linked to this goal - organizational only, matching Quest.goalId's
+  /// shape. Deliberately NOT counted toward a COMPLETION-type goal's progress
+  /// (see GoalsService.syncCompletionProgress's doc comment for why) - a
+  /// habit has no discrete "done" state the way a quest does, so it doesn't
+  /// fit the same counting model.
+  habits            Habit[]
   goalSkills        GoalSkill[]
   attributeBonuses  ActivityAttributeBonus[]
   questRequirements QuestRequirement[]       @relation("RequiredByGoal")
+  milestones        GoalMilestone[]
 
   @@index([userId])
   @@map("goals")
@@ -351,6 +359,30 @@ model GoalSkill {
 
   @@unique([goalId, skillId])
   @@map("goal_skills")
+}
+
+/// "Goal milestones" (Sprint 4): an ordered checklist item within a goal,
+/// distinct from Quest/Habit - lighter-weight than creating a whole quest for
+/// a simple checkpoint (e.g. "Reach 100kg on deadlift" inside a "Get Stronger"
+/// goal). Optionally carries its own small XP reward, separate from the
+/// goal's own completion reward - see GoalsService for the award rules.
+model GoalMilestone {
+  id          String    @id @default(uuid())
+  goalId      String
+  title       String
+  description String?
+  /// Display order within the goal - not a Prisma-enforced uniqueness, just a sort key set by the client.
+  order       Int
+  xpReward    Int       @default(0)
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  goal Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@index([goalId])
+  @@map("goal_milestones")
 }
 
 model Quest {
@@ -416,14 +448,14 @@ model QuestRequirement {
   count       Int?
 
   /// ACHIEVEMENT: the specific achievement that must be unlocked.
-  achievementId String?
+  achievementId   String?
   /// QUEST_COMPLETED: a specific other quest that must be completed - not
   /// "any quest".
   requiredQuestId String?
   /// GOAL_COMPLETED: a specific goal that must be completed - not "any goal",
   /// mirroring QUEST_COMPLETED's specificity (more composable than a vague
   /// "complete something").
-  requiredGoalId String?
+  requiredGoalId  String?
 
   quest         Quest        @relation("QuestOwnRequirements", fields: [questId], references: [id], onDelete: Cascade)
   skill         Skill?       @relation(fields: [skillId], references: [id], onDelete: Cascade)
@@ -451,9 +483,9 @@ model QuestRequirement {
 /// quest's reward between completing and claiming it changes what's paid
 /// out (see docs/gameplay-systems.md for the tradeoff).
 model QuestCompletion {
-  id      String @id @default(uuid())
-  questId String
-  userId  String
+  id        String @id @default(uuid())
+  questId   String
+  userId    String
   /// "once" for ONE_TIME/DEADLINE/MILESTONE quests; a day-key (getDayKey())
   /// for RECURRING quests - same per-period dedup mechanism HabitCompletion
   /// already uses via its own periodKey.
@@ -530,6 +562,10 @@ model QuestSkill {
 model Habit {
   id          String  @id @default(uuid())
   userId      String
+  /// Optional goal this habit supports ("goal↔habit relationships", Sprint 4) -
+  /// mirrors Quest.goalId exactly: organizational grouping only, shown on the
+  /// goal detail page, never counted toward a COMPLETION-type goal's progress.
+  goalId      String?
   title       String
   description String?
 
@@ -547,6 +583,7 @@ model Habit {
   updatedAt DateTime @updatedAt
 
   user             User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal             Goal?                    @relation(fields: [goalId], references: [id], onDelete: SetNull)
   habitSkills      HabitSkill[]
   completions      HabitCompletion[]
   attributeBonuses ActivityAttributeBonus[]

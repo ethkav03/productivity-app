@@ -2,9 +2,10 @@
 
 This is a deep-dive reference for Life RPG's core game-mechanic logic: the XP ledger, the
 leveling formula, the completion workflow, duplicate-completion safety, the achievement engine,
-the friends/leaderboard social layer, and level-up rewards. It documents the current backend
-implementation as of this writing, not an aspirational design. If you change any of the mechanics
-described here, update this file in the same change (see the closing note at the bottom).
+the friends/leaderboard social layer, level-up rewards, and goal milestones/quest-linked
+auto-progress. It documents the current backend implementation as of this writing, not an
+aspirational design. If you change any of the mechanics described here, update this file in the
+same change (see the closing note at the bottom).
 
 Source files referenced throughout:
 
@@ -951,7 +952,105 @@ That's 6 level rewards. Thresholds are deliberately low (matching the achievemen
 bar, e.g. `getting-physical` at Physical Level 2) so this is easy to reach and verify end-to-end,
 not a claim about intended pacing for a live game economy.
 
-## 14. Keep this file in sync
+## 14. Better Goals: milestones and quest-linked auto-progress (Feature 8)
+
+Sprint 4 ("Better Goals") targets the roadmap's own sprint grouping - "goal milestones, goal
+decomposition, goal↔quest relationships, goal↔habit relationships, goal completion rewards" - by
+extending the existing `Goal` model rather than building the roadmap's full "intelligent
+decomposition" vision. See the deliberate-deviation note in `docs/feature-roadmap.md` § "Feature
+8" for what's scoped out and why.
+
+### What already existed before this sprint
+
+Two of the five roadmap bullets were already fully built, just not documented as such:
+- **"goal↔quest relationships"** - `Quest.goalId` (optional FK to `Goal`) has existed since the
+  initial schema. A `COMPLETION`-type goal's progress is defined as "count of linked quests with
+  `status: COMPLETED`" (section on `Goal.currentValue` in `docs/data-model.md`).
+- **"goal completion rewards"** - `Goal.xpReward`, `GoalSkill.amount` (per-skill overrides), and
+  `ActivityAttributeBonus` rows already apply the exact same "XP Bundles" machinery (section 3) to
+  goal completion that quests and habits get. There was no separate reward *system* to build here.
+
+### goal↔habit relationships
+
+`Habit.goalId` (nullable FK to `Goal`, `onDelete: SetNull`) mirrors `Quest.goalId` field-for-field
+- same validation (`assertOwnedGoal`, duplicated per module per the codebase's established
+convention rather than shared across a DI boundary), same optional-vs-null update semantics.
+
+**Deliberately organizational only** - a linked habit is never counted toward a `COMPLETION`-type
+goal's progress, unlike a linked quest. A habit has no discrete "done" state the way a quest does
+(`Habit.currentStreak`/`isActive` describe an ongoing pattern, not a single completable event), so
+counting habit check-ins toward a fixed `targetValue` doesn't fit the same model without inventing
+a new semantic (e.g. "N check-ins" vs. "quest completed") that the roadmap doesn't actually ask
+for. Linked habits exist purely to answer "which habits support this goal" on the goal detail
+page - the same role `/skills/[id]`'s "What contributes to this skill?" section plays for skills
+(Sprint 3, Feature 7).
+
+### COMPLETION-type goals now sync automatically
+
+Before this sprint, a `COMPLETION`-type goal's `currentValue` was **only** ever written by
+`POST /goals/:id/progress` - a manual endpoint requiring the caller to re-count their own linked
+quests and type the number in themselves. Nothing auto-updated it when a linked quest actually
+completed, so a `COMPLETION` goal could sit at `currentValue: 0` indefinitely even after every
+quest it depended on was done. This was a real gap, not a documented deviation - fixed this sprint.
+
+`QuestsService.complete()` now calls `GoalsService.syncCompletionProgress(userId, goalId)` right
+after a **non-recurring** quest (`ONE_TIME`/`DEADLINE`/`MILESTONE` - the types that can actually
+reach `status: COMPLETED`; `RECURRING` quests never do, so there's nothing to sync for them) with
+a `goalId` finishes:
+
+```ts
+async syncCompletionProgress(userId: string, goalId: string): Promise<CompletionResult | null> {
+  const goal = await this.prisma.goal.findUnique({ where: { id: goalId }, include: {...} });
+  if (!goal || goal.userId !== userId || goal.status !== 'ACTIVE' || goal.type !== 'COMPLETION') {
+    return null; // best-effort sync, not something the caller depends on
+  }
+  const linkedCompletedQuestCount = await this.prisma.quest.count({ where: { goalId, status: 'COMPLETED' } });
+  const willComplete = goal.targetValue != null && linkedCompletedQuestCount >= goal.targetValue;
+  return (await this.finalizeGoalProgress(userId, goal, linkedCompletedQuestCount, willComplete)).completion ?? null;
+}
+```
+
+`finalizeGoalProgress` is the extracted core of what used to be `progress()`'s body - both methods
+now share it, so a `COMPLETION` goal completing via a synced quest gets the exact same treatment
+(status flip, `completedAt`, the goal's own `GOAL_COMPLETION` XP award via
+`ProgressionService.completeActivity`) as one completed via a manual `POST /goals/:id/progress`
+call. `QuestsModule` importing `GoalsModule` for this (see `docs/backend.md`) is the one edge in
+the module graph that reaches across activity modules directly rather than through
+`ProgressionModule` - deliberate, since this isn't part of the XP/streak/achievement workflow at
+all, just a data-consistency fix scoped to `Quest` → `Goal`.
+
+The frontend goal detail page no longer shows a manual number-entry form for `COMPLETION`-type
+goals (previously it reused the `NUMERIC` type's raw input, which never matched the read-only
+`progressPercent` shown just above it) - see `docs/frontend.md`.
+
+### Goal milestones
+
+A `GoalMilestone` is a lightweight, ordered checklist item within a goal - "reach 100kg on
+deadlift" inside a "Get Stronger" goal, without the overhead of creating a whole `Quest` for a
+single checkpoint. Always appended to the end on creation (`order` = current milestone count for
+that goal); reordering is a plain `PATCH` with a new `order` value, not enforced unique by the
+database.
+
+**XP rule:** `xpReward` defaults to `0` - a pure checklist item. Marking one complete
+(`false → true`) only calls `ProgressionService.completeActivity`
+(`sourceType: 'MILESTONE_COMPLETION'`) **if `xpReward > 0`**; a zero-reward milestone just flips
+`completed`/`completedAt` directly, with no `XPTransaction` row and no achievement/level-reward
+re-check. This matters because milestones are meant to be created freely as plain checklist items
+- writing a zero-amount ledger row and re-running two data-driven condition scans on every tick
+would be pure overhead for the common case. `updateMilestone` returns `{ milestone, completion? }`
+- `completion` is only present when XP was actually awarded, mirroring the same
+optional-`completion` shape `GoalsService.progress`/`QuestsService.claimReward` already use.
+
+**Undo doesn't claw back XP.** Setting `completed: false` on an already-complete milestone is a
+plain state flip - it does not reverse any `ProgressionService.completeActivity` call already
+made. This matches every other completion flow in the app: editing a quest's `xpReward` after
+completion doesn't retroactively adjust past ledger rows either (section 7's "reward claiming"
+deliberate-simplification note makes the same call for a different reason). Building real XP
+reversal would mean negative `XPTransaction` rows, level recalculation, and reasoning about
+whether an achievement/level-reward unlocked by that XP should also un-unlock - a much bigger
+feature than "let the user fix a misclick."
+
+## 15. Keep this file in sync
 
 This file documents **why** the gameplay mechanics work the way they do, not just what the code
 currently says - the reasoning here (full XP per tagged skill/attribute, the

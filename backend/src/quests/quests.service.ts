@@ -11,6 +11,7 @@ import { ProgressionService } from '../progression/progression.service';
 import { CompletionResult } from '../progression/progression.types';
 import { SkillsService } from '../skills/skills.service';
 import { AttributesService } from '../attributes/attributes.service';
+import { GoalsService } from '../goals/goals.service';
 import { getDayKey } from '../common/period';
 import { DIFFICULTY_XP } from '../common/leveling';
 import { findNeglectedAttribute } from '../common/neglected-attribute';
@@ -83,6 +84,7 @@ export class QuestsService {
     private readonly progressionService: ProgressionService,
     private readonly skillsService: SkillsService,
     private readonly attributesService: AttributesService,
+    private readonly goalsService: GoalsService,
   ) {}
 
   /**
@@ -393,6 +395,15 @@ export class QuestsService {
         throw new ConflictException(quest.type === 'RECURRING' ? 'Quest already completed today' : 'Quest already completed');
       }
       throw error;
+    }
+
+    // "goal↔quest relationships" (Sprint 4): a non-recurring quest reaching
+    // COMPLETED status is the trigger for keeping a linked COMPLETION-type
+    // goal's progress in sync - see GoalsService.syncCompletionProgress.
+    // Recurring quests never reach status COMPLETED, so there's nothing to
+    // sync for them.
+    if (quest.type !== 'RECURRING' && quest.goalId) {
+      await this.goalsService.syncCompletionProgress(userId, quest.goalId);
     }
 
     const updatedQuest = await this.findOne(userId, id);

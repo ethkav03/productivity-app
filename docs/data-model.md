@@ -8,7 +8,7 @@ every model, enum, and constraint currently in that schema.
 
 ## Migration history
 
-Ten migrations exist as of this writing:
+Twelve migrations exist as of this writing:
 
 | Migration folder | What it added |
 | --- | --- |
@@ -23,6 +23,7 @@ Ten migrations exist as of this writing:
 | `20260720180000_quest_board` | Adds `Quest.category` (`QuestCategory`, `@default(LONG_TERM)`, not nullable - existing rows backfilled to `LONG_TERM`). Backs "Quest Board" grouping (Daily/Weekly/Long-Term/System) - see the enum reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 2". |
 | `20260720190000_daily_weekly_challenges` | Adds `CHALLENGE_COMPLETION` to `XPSourceType`; introduces `Challenge` (a time-boxed, entirely system-generated Daily/Weekly objective) and its `ChallengeType`/`ChallengeStatus` enums. Backs "Daily and Weekly Challenges" - see the model reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 3". |
 | `20260720200000_level_rewards` | Adds `LEVEL_REWARD_UNLOCK` to `NotificationType`; introduces `LevelReward` (a globally-seeded, character- or attribute-scoped reward unlocked at a level threshold) and `UserLevelReward` (per-user unlock record) and the `LevelRewardType` enum; adds `User.equippedTitleId` (nullable FK to `LevelReward`, `onDelete: SetNull`) and `User.habitStreakProtectionCharges` (`Int @default(0)`). Backs "Level-Up Rewards" - see the model reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 6". |
+| `20260720210000_better_goals` | Adds `MILESTONE_COMPLETION` to `XPSourceType`; adds `Habit.goalId` (nullable FK to `Goal`, `onDelete: SetNull`, mirroring `Quest.goalId`); introduces `GoalMilestone` (an ordered checklist item within a goal, optionally carrying its own small XP reward). Backs "Better Goals" - see the model reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 8". |
 
 `migration_lock.toml` pins the schema to the `postgresql` provider (Prisma refuses to mix
 providers across migrations once this file exists).
@@ -42,6 +43,8 @@ User ──┬── Attribute (8 fixed, auto-created at registration)
        ├── Goal, Quest, Habit, HabitCompletion  (also owned directly by User)
        ├── Quest ──┬── QuestRequirement ──── one of Skill / Attribute / Achievement / Quest / Goal
        │           └── QuestCompletion (one row per completion, tracks claimedAt)
+       ├── Habit ──── (optional) Goal
+       ├── Goal ──── GoalMilestone (ordered checklist items)
        ├── Challenge ──── Attribute (targeted) + optional Skill (descriptive)
        ├── XPTransaction (references User, and optionally Skill and/or Attribute)
        ├── UserAchievement ──── Achievement (global, not per-user)
@@ -58,11 +61,14 @@ with zero or more `Skill`s through a dedicated join table (`GoalSkill`, `QuestSk
 `HabitSkill`), and each join-table row may carry its own `amount` overriding that activity's
 flat `xpReward` for that one skill ("XP Bundles" - see `docs/gameplay-systems.md`). Each
 `Goal`/`Quest`/`Habit` can also have zero or more `ActivityAttributeBonus` rows, paying bonus XP
-directly into an attribute with no tagged skill involved. A `Quest` can optionally belong to a
-`Goal`, can be locked behind zero or more `QuestRequirement` prerequisites ("level-gated quests"),
-and each of its completions is its own `QuestCompletion` row tracking whether the reward has been
-claimed yet ("reward claiming" - see `docs/gameplay-systems.md`). A `Habit`'s individual check-ins
-are recorded as `HabitCompletion` rows. Every XP grant anywhere in the app is recorded as an
+directly into an attribute with no tagged skill involved. A `Quest` or a `Habit` can optionally
+belong to a `Goal` (`goalId`, "goal↔quest"/"goal↔habit relationships" - Sprint 4); a `Quest` can
+also be locked behind zero or more `QuestRequirement` prerequisites ("level-gated quests"), and
+each of its completions is its own `QuestCompletion` row tracking whether the reward has been
+claimed yet ("reward claiming" - see `docs/gameplay-systems.md`). A `Goal` can also own zero or
+more ordered `GoalMilestone` checklist items ("goal milestones" - Sprint 4), each optionally
+carrying its own small XP reward separate from the goal's own completion reward. A `Habit`'s
+individual check-ins are recorded as `HabitCompletion` rows. Every XP grant anywhere in the app is recorded as an
 `XPTransaction`, which can reference a `User` alone (character-level XP), or also a `Skill`
 and/or that skill's `Attribute` (the XP cascade). `Achievement` definitions are global (not
 per-user) and unlocked per user via `UserAchievement`. `LevelReward` definitions are likewise
@@ -215,8 +221,8 @@ by completion, or as a binary done/not-done.
 | `category` | `String?` | nullable | |
 | `type` | `GoalType` | `@default(BINARY)` | See enum reference. |
 | `status` | `GoalStatus` | `@default(ACTIVE)` | See enum reference. |
-| `targetValue` | `Float?` | nullable | Used when `type = NUMERIC`. |
-| `currentValue` | `Float` | `@default(0)` | Progress value, compared against `targetValue`. |
+| `targetValue` | `Float?` | nullable | Used when `type = NUMERIC` (a target number) or `type = COMPLETION` (a target count of linked completed quests). |
+| `currentValue` | `Float` | `@default(0)` | Progress value, compared against `targetValue`. Written by `POST /goals/:id/progress` for `NUMERIC`/`BINARY` goals; for `COMPLETION` goals it's instead kept in sync automatically by `GoalsService.syncCompletionProgress` (Sprint 4) whenever a linked `Quest` completes - see `docs/gameplay-systems.md`. |
 | `unit` | `String?` | nullable | Unit label for `targetValue`/`currentValue` (e.g. "km", "books"). |
 | `xpReward` | `Int` | `@default(500)` | XP granted on completion. |
 | `startDate` | `DateTime` | `@default(now())` | |
@@ -226,11 +232,38 @@ by completion, or as a binary done/not-done.
 | `updatedAt` | `DateTime` | `@updatedAt` | |
 
 **Relations:** `user` (`onDelete: Cascade`), `quests[]` (quests that reference this goal),
-`goalSkills[]` (tagged skills via `GoalSkill`), `attributeBonuses[]`
-(`ActivityAttributeBonus[]`), `questRequirements[]` (`QuestRequirement[]` with a
-`GOAL_COMPLETED` requirement pointing at this goal).
+`habits[]` (habits that reference this goal via `Habit.goalId` - organizational only, never
+counted toward `COMPLETION`-type progress; Sprint 4), `goalSkills[]` (tagged skills via
+`GoalSkill`), `attributeBonuses[]` (`ActivityAttributeBonus[]`), `questRequirements[]`
+(`QuestRequirement[]` with a `GOAL_COMPLETED` requirement pointing at this goal), `milestones[]`
+(`GoalMilestone[]`, ordered checklist items - Sprint 4).
 
 **Constraints:** `@@index([userId])`. Maps to table `goals`.
+
+---
+
+### GoalMilestone
+
+"Goal milestones" (Sprint 4): an ordered checklist item within a goal, lighter-weight than
+creating a whole `Quest` for a simple checkpoint (e.g. "Reach 100kg on deadlift" inside a "Get
+Stronger" goal). Optionally carries its own small XP reward, separate from the goal's own
+completion reward.
+
+| Field | Type | Default / Nullable | Notes |
+| --- | --- | --- | --- |
+| `id` | `String` (uuid) | `@default(uuid())`, PK | |
+| `goalId` | `String` | required | FK to `Goal`. |
+| `title` | `String` | required | |
+| `description` | `String?` | nullable | |
+| `order` | `Int` | required | Display order within the goal - a client-set sort key, not a DB-enforced uniqueness. Set to the goal's current milestone count on creation (append to the end); changeable via `PATCH`. |
+| `xpReward` | `Int` | `@default(0)` | XP awarded when marked complete. `0` (the default) means a pure checklist item - no `XPTransaction` row is written and `ProgressionService.completeActivity` isn't called at all (see `GoalsService.updateMilestone`'s doc comment). |
+| `completed` | `Boolean` | `@default(false)` | |
+| `completedAt` | `DateTime?` | nullable | Set when `completed` transitions to `true`; cleared if un-completed. |
+| `createdAt` | `DateTime` | `@default(now())` | |
+
+**Relations:** `goal` (`onDelete: Cascade`).
+
+**Constraints:** `@@index([goalId])`. Maps to table `goal_milestones`.
 
 ---
 
@@ -413,6 +446,7 @@ character-level streak.
 | --- | --- | --- | --- |
 | `id` | `String` (uuid) | `@default(uuid())`, PK | |
 | `userId` | `String` | required | FK to `User`. |
+| `goalId` | `String?` | nullable | FK to `Goal` this habit supports ("goal↔habit relationships", Sprint 4). Mirrors `Quest.goalId` exactly: organizational grouping only, shown on the goal detail page, `onDelete: SetNull`. Deliberately never counted toward a `COMPLETION`-type goal's progress - see the `Goal` model's `currentValue` note. |
 | `title` | `String` | required | |
 | `description` | `String?` | nullable | |
 | `frequency` | `HabitFrequency` | `@default(DAILY)` | See enum reference. |
@@ -426,8 +460,8 @@ character-level streak.
 | `createdAt` | `DateTime` | `@default(now())` | |
 | `updatedAt` | `DateTime` | `@updatedAt` | |
 
-**Relations:** `user` (`onDelete: Cascade`), `habitSkills[]`, `completions[]`
-(`HabitCompletion[]`), `attributeBonuses[]` (`ActivityAttributeBonus[]`).
+**Relations:** `user` (`onDelete: Cascade`), `goal` (`Goal?`, `onDelete: SetNull`), `habitSkills[]`,
+`completions[]` (`HabitCompletion[]`), `attributeBonuses[]` (`ActivityAttributeBonus[]`).
 
 **Constraints:** `@@index([userId])`. Maps to table `habits`.
 
@@ -792,6 +826,7 @@ fields each type uses.
 | `GOAL_COMPLETION` | XP granted from completing a `Goal`. |
 | `ACHIEVEMENT_BONUS` | XP granted as a bonus for unlocking an `Achievement`. |
 | `CHALLENGE_COMPLETION` | Bonus XP granted for completing a `Challenge` (Daily/Weekly). |
+| `MILESTONE_COMPLETION` | XP granted from completing a `GoalMilestone` with a nonzero `xpReward` (Sprint 4). Never written for a zero-`xpReward` milestone - see the `GoalMilestone` model. |
 | `CORRECTION` | Manual adjustment to a user's XP ledger (can carry a negative `amount`); paired with `XPTransaction.note` to explain the adjustment. |
 
 ### AchievementRequirementType
