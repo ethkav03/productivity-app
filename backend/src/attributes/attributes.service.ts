@@ -2,9 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { calculateLevelState } from '../common/leveling';
-import { DEFAULT_ATTRIBUTES } from './default-attributes';
-
-const ATTRIBUTE_ORDER = DEFAULT_ATTRIBUTES.map((attribute) => attribute.key);
+import { ATTRIBUTE_KEY_ORDER, DEFAULT_ATTRIBUTES } from './default-attributes';
 
 function serializeWithLevel<T extends { totalXP: number }>(entity: T) {
   const { currentLevelXp, xpForNextLevel } = calculateLevelState(entity.totalXP);
@@ -51,7 +49,7 @@ export class AttributesService {
     });
 
     const sorted = attributes.sort(
-      (a, b) => ATTRIBUTE_ORDER.indexOf(a.key) - ATTRIBUTE_ORDER.indexOf(b.key),
+      (a, b) => ATTRIBUTE_KEY_ORDER.indexOf(a.key) - ATTRIBUTE_KEY_ORDER.indexOf(b.key),
     );
 
     return sorted.map((attribute) => {

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { calculateLevelState } from '../common/leveling';
 import { getDayKey } from '../common/period';
+import { ATTRIBUTE_KEY_ORDER } from '../attributes/default-attributes';
 
 const COMPLETION_SOURCE_TYPES = ['QUEST_COMPLETION', 'HABIT_COMPLETION', 'GOAL_COMPLETION'] as const;
 
@@ -117,6 +118,10 @@ export class AnalyticsService {
 
   async attributeProgress(userId: string) {
     const attributes = await this.prisma.attribute.findMany({ where: { userId } });
+    // Row order from Postgres is not guaranteed absent an ORDER BY - sort to the same
+    // fixed attribute order used everywhere else (Skills page, onboarding, this order
+    // is also what the dashboard radar chart's axes rely on for a stable shape).
+    attributes.sort((a, b) => ATTRIBUTE_KEY_ORDER.indexOf(a.key) - ATTRIBUTE_KEY_ORDER.indexOf(b.key));
 
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const weeklyAgg = await this.prisma.xPTransaction.groupBy({

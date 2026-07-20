@@ -225,6 +225,19 @@ all 8 automatically; they are not user-created or deletable.
   - *(private)* `getOwnedAttribute(userId, id)` — fetch-or-404, then 403 if not owned.
 - **Depended on by:** `AuthModule` (calls `ensureDefaultAttributes` during registration).
 
+#### Attribute ordering
+
+`backend/src/attributes/default-attributes.ts` exports `ATTRIBUTE_KEY_ORDER` (an `AttributeKey[]`
+derived from `DEFAULT_ATTRIBUTES`), the single source of truth for "the" attribute display order
+(Physical, Intelligence, Discipline, Energy, Social, Wealth, Creativity, Wisdom). Postgres does
+not guarantee row order without an explicit `ORDER BY`, so **any query that returns multiple
+attributes must sort by this constant** rather than relying on insertion/database order. Two
+places do this today: `AttributesService.findAll` and `AnalyticsService.attributeProgress` (the
+latter's sort was added specifically because the frontend's dashboard radar chart made a stable
+axis order visually load-bearing for the first time - see `docs/design-system.md` § "Attribute
+color palette" for why the order also has to match the validated color palette's assignment
+order, not just look consistent).
+
 ### `SkillsModule` (`backend/src/skills/`)
 
 Owns user-created skills, each belonging to exactly one attribute (`Skill.attributeId`). Also

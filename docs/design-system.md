@@ -124,8 +124,12 @@ Two rules follow from that validation and must be preserved:
    Energy, Social, Wealth, Creativity, Wisdom - the `AttributeKey` union order in
    `frontend/src/lib/types.ts`) matches the order these attributes are actually displayed
    adjacently in across the app (Skills page sections, onboarding attribute groups, Analytics
-   attribute grid), so the validated worst-adjacent-pair CVD separation applies to the
-   attribute-to-attribute comparisons users actually make on screen.
+   attribute grid, the dashboard's "Character Shape" radar chart axes), so the validated
+   worst-adjacent-pair CVD separation applies to the attribute-to-attribute comparisons users
+   actually make on screen. This depends on the backend actually returning attributes in this
+   order rather than database row order (see `docs/backend.md` § "Attribute ordering") - a real
+   gap here (Postgres does not guarantee row order without `ORDER BY`) was fixed once the radar
+   chart made the ordering visually load-bearing for the first time.
 
 ### `attributeColor()` helper
 

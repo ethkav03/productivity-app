@@ -4,6 +4,25 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-19 — Dashboard radar chart
+
+Added a "Character Shape" radar chart to the dashboard, right below the header: one axis per
+attribute (fixed order), a single primary-colored polygon for the character's own levels, and
+each axis label tinted by its attribute's color (the polygon itself is one series - the
+character - so it stays a single hue; only the axis identities get the categorical treatment,
+consistent with how `AttributeDots` never colors a mark by more than the entity it represents).
+Uses Recharts' `RadarChart` (already a dependency) and the existing `GET /analytics/attributes`
+endpoint/`getAnalyticsAttributes()` client function - no new endpoint needed.
+
+Fixed a real gap surfaced while building this: `AnalyticsService.attributeProgress` had no
+`ORDER BY`, so its result order wasn't guaranteed to match the fixed attribute display order used
+everywhere else - harmless for the existing grid layout (which doesn't depend on adjacency) but
+would have made the new radar chart's axis order (and therefore its "shape") nondeterministic
+between requests. Extracted the fixed order into a shared `ATTRIBUTE_KEY_ORDER` constant
+(`backend/src/attributes/default-attributes.ts`) and sorted by it in both
+`AttributesService.findAll` (already correct, now shares the constant instead of a local copy)
+and `AnalyticsService.attributeProgress` (the actual fix).
+
 ## 2026-07-19 — `docs/` created
 
 Added this documentation folder: `architecture.md`, `data-model.md`, `api-reference.md`,

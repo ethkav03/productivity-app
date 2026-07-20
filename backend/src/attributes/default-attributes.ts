@@ -22,3 +22,11 @@ export const DEFAULT_ATTRIBUTES: DefaultAttributeDefinition[] = [
   { key: 'CREATIVITY', name: 'Creativity', description: 'Your ability to generate, develop and express ideas.', icon: 'palette' },
   { key: 'WISDOM', name: 'Wisdom', description: 'Your ability to make good decisions and understand yourself and the world.', icon: 'compass' },
 ];
+
+/**
+ * The fixed display order for the 8 attributes, matching DEFAULT_ATTRIBUTES.
+ * Any endpoint returning multiple attributes should sort by this rather than
+ * relying on database row order, which Postgres does not guarantee absent an
+ * explicit ORDER BY.
+ */
+export const ATTRIBUTE_KEY_ORDER: AttributeKey[] = DEFAULT_ATTRIBUTES.map((attribute) => attribute.key);

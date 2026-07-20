@@ -4,6 +4,15 @@ import Link from 'next/link';
 import clsx from 'clsx';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
+import {
+  PolarAngleAxis,
+  PolarGrid,
+  PolarRadiusAxis,
+  Radar,
+  RadarChart,
+  ResponsiveContainer,
+  Tooltip,
+} from 'recharts';
 import { CheckCircle2, Circle, Flame, Sparkles, Trophy } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useCelebration } from '@/hooks/use-celebration';
@@ -11,7 +20,8 @@ import { completeHabit, getHabits } from '@/lib/api/habits';
 import { completeQuest, getQuests } from '@/lib/api/quests';
 import { getGoals } from '@/lib/api/goals';
 import { getUnlockedAchievements } from '@/lib/api/achievements';
-import { getAnalyticsFeed } from '@/lib/api/analytics';
+import { getAnalyticsAttributes, getAnalyticsFeed } from '@/lib/api/analytics';
+import { attributeColor } from '@/lib/attribute-colors';
 import { AttributeDots } from '@/components/ui/attribute-dots';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { ProgressBar } from '@/components/ui/progress-bar';
@@ -19,7 +29,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { PageSpinner, Spinner } from '@/components/ui/spinner';
-import { CompletionResult, Habit, Quest } from '@/lib/types';
+import { AttributeKey, CompletionResult, Habit, Quest } from '@/lib/types';
 
 function greetingForHour(hour: number) {
   if (hour < 12) return 'Good morning';
@@ -135,6 +145,8 @@ export default function DashboardPage() {
           }
         />
       )}
+
+      <AttributeRadarSection />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
@@ -269,6 +281,96 @@ export default function DashboardPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+const RADAR_TOOLTIP_STYLE = {
+  backgroundColor: 'rgb(var(--surface))',
+  border: '1px solid rgb(var(--border))',
+  borderRadius: 10,
+  fontSize: 12,
+  padding: '8px 10px',
+};
+
+interface AttributeAxisTickProps {
+  x?: number;
+  y?: number;
+  textAnchor?: 'start' | 'middle' | 'end' | 'inherit';
+  payload?: { value: string };
+  colorByName: Map<string, AttributeKey>;
+}
+
+/** Colors each radar axis label by its attribute, reinforcing identity the same way AttributeDots does elsewhere - never the polygon itself, which is one series (the character), not 8. */
+function AttributeAxisTick({ x, y, textAnchor, payload, colorByName }: AttributeAxisTickProps) {
+  if (x === undefined || y === undefined || !payload) return null;
+  const key = colorByName.get(payload.value);
+  return (
+    <text x={x} y={y} textAnchor={textAnchor} fontSize={11} fontWeight={600} fill={key ? attributeColor(key) : 'rgb(var(--muted))'}>
+      {payload.value}
+    </text>
+  );
+}
+
+function AttributeRadarSection() {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['analytics', 'attributes'],
+    queryFn: getAnalyticsAttributes,
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Character Shape</CardTitle>
+        <span className="text-xs text-muted">Attribute levels compared to each other</span>
+      </CardHeader>
+
+      {isLoading && (
+        <div className="flex h-72 items-center justify-center">
+          <Spinner />
+        </div>
+      )}
+
+      {!isLoading && (isError || !data) && (
+        <p className="py-8 text-center text-sm text-muted">Couldn&apos;t load your attribute levels.</p>
+      )}
+
+      {!isLoading && data && (
+        <div className="mx-auto max-w-lg">
+          <ResponsiveContainer width="100%" height={320}>
+            <RadarChart data={data} outerRadius="68%">
+              <PolarGrid stroke="rgb(var(--border))" />
+              <PolarAngleAxis
+                dataKey="name"
+                tick={(props) => (
+                  <AttributeAxisTick {...props} colorByName={new Map(data.map((a) => [a.name, a.key]))} />
+                )}
+              />
+              <PolarRadiusAxis
+                angle={90}
+                domain={[0, Math.max(5, Math.ceil(Math.max(...data.map((a) => a.level), 1) * 1.2))]}
+                tickCount={4}
+                axisLine={false}
+                tick={{ fill: 'rgb(var(--muted))', fontSize: 10 }}
+              />
+              <Tooltip
+                contentStyle={RADAR_TOOLTIP_STYLE}
+                labelStyle={{ color: 'rgb(var(--foreground))', fontWeight: 600 }}
+                formatter={(value: number) => [`Level ${value}`, '']}
+              />
+              <Radar
+                name="Level"
+                dataKey="level"
+                stroke="rgb(var(--primary))"
+                fill="rgb(var(--primary))"
+                fillOpacity={0.25}
+                strokeWidth={2}
+                dot={{ r: 3, fill: 'rgb(var(--primary))', stroke: 'rgb(var(--surface))', strokeWidth: 1 }}
+              />
+            </RadarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </Card>
   );
 }
 

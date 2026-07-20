@@ -41,7 +41,7 @@ for exact prop shapes, read the referenced files directly.
 | `/login` | `frontend/app/(auth)/login/page.tsx` | Email + password login form; on success calls `router.push('/dashboard')`. |
 | `/register` | `frontend/app/(auth)/register/page.tsx` | Email + username + password registration form; on success calls `router.push('/onboarding')`. |
 | `/onboarding` | `frontend/app/onboarding/page.tsx` | 4-step first-run wizard: pick starting skills, create a goal, add starter quests/habits. |
-| `/dashboard` | `frontend/app/(app)/dashboard/page.tsx` | Home screen: streak + level/XP header, today's habits, active quests, active goals, recent achievements, activity feed. |
+| `/dashboard` | `frontend/app/(app)/dashboard/page.tsx` | Home screen: streak + level/XP header, an 8-axis "Character Shape" radar chart of attribute levels, today's habits, active quests, active goals, recent achievements, activity feed. |
 | `/skills` | `frontend/app/(app)/skills/page.tsx` | Skills grouped by the 8 fixed attributes, with progress bars; add-skill modal (suggested or custom) and delete. |
 | `/skills/[id]` | `frontend/app/(app)/skills/[id]/page.tsx` | Single skill detail: rename/edit description, cumulative XP growth chart, recent XP transaction list, delete. |
 | `/quests` | `frontend/app/(app)/quests/page.tsx` | Active/Completed quest tabs, create-quest modal, complete action. |
