@@ -49,6 +49,7 @@ for exact prop shapes, read the referenced files directly.
 | `/goals` | `frontend/app/(app)/goals/page.tsx` | Active/Completed goal tabs, create-goal modal. |
 | `/goals/[id]` | `frontend/app/(app)/goals/[id]/page.tsx` | Single goal detail: linked quests, log-progress form (binary mark-complete or numeric value entry), delete. |
 | `/achievements` | `frontend/app/(app)/achievements/page.tsx` | All achievement definitions split into Unlocked / Locked sections, with a per-type requirement description. |
+| `/leaderboard` | `frontend/app/(app)/leaderboard/page.tsx` | Ranks the caller against their accepted friends: metric tabs (Overall Level / Attribute / XP Earned, the latter two with a sub-select), a top-3 podium (graceful with fewer than 3 entries), a 4th-onward ranked list, and a "Manage Friends" modal (send/accept/decline/remove) with an unread-incoming-request badge. |
 | `/analytics` | `frontend/app/(app)/analytics/page.tsx` | Overview stat tiles, attribute progression grid, XP-over-time area chart, skill-level bar chart, activity heatmap, recent activity feed. |
 | `/settings` | `frontend/app/(app)/settings/page.tsx` | Edit profile (username, avatar URL), theme toggle, account info (email, member since), log out. |
 
@@ -316,6 +317,7 @@ A single shared `NAV_ITEMS` array consumed by both `Sidebar` and `MobileNav`:
 | Habits | `/habits` | `Repeat` |
 | Goals | `/goals` | `Target` |
 | Achievements | `/achievements` | `Award` |
+| Leaderboard | `/leaderboard` | `Crown` |
 | Analytics | `/analytics` | `BarChart3` |
 | Settings | `/settings` | `Settings` |
 

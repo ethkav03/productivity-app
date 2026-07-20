@@ -1,10 +1,10 @@
 # Gameplay Systems
 
 This is a deep-dive reference for Life RPG's core game-mechanic logic: the XP ledger, the
-leveling formula, the completion workflow, duplicate-completion safety, and the achievement
-engine. It documents the current backend implementation as of this writing, not an aspirational
-design. If you change any of the mechanics described here, update this file in the same change
-(see the closing note at the bottom).
+leveling formula, the completion workflow, duplicate-completion safety, the achievement engine,
+and the friends/leaderboard social layer. It documents the current backend implementation as of
+this writing, not an aspirational design. If you change any of the mechanics described here,
+update this file in the same change (see the closing note at the bottom).
 
 Source files referenced throughout:
 
@@ -16,6 +16,8 @@ Source files referenced throughout:
   `backend/src/goals/goals.service.ts`
 - `backend/src/auth/auth.service.ts`, `backend/src/attributes/attributes.service.ts`,
   `backend/src/attributes/default-attributes.ts`, `backend/src/skills/default-skills.ts`
+- `backend/src/friends/friends.service.ts`, `backend/src/leaderboard/leaderboard.service.ts`,
+  `backend/src/leaderboard/period-bounds.ts`
 - `backend/prisma/schema.prisma`, `backend/prisma/seed.ts`
 
 ## 1. The core loop
@@ -493,7 +495,61 @@ That's 13 achievements. None of the current seed rows use `SKILL_LEVEL_REACHED` 
 `SKILL_ACTIVITY_COUNT`, even though `AchievementsService` fully supports both - those two
 requirement types are implemented and ready but not yet exercised by any seeded achievement.
 
-## 9. Keep this file in sync
+## 9. Friends & Leaderboard
+
+`FriendsModule` (`backend/src/friends/`) and `LeaderboardModule` (`backend/src/leaderboard/`) add
+a lightweight social layer on top of the character system: a friend-request graph, and a
+leaderboard that ranks the caller against their accepted friends.
+
+### Friendship lifecycle
+
+A `Friendship` row (`backend/prisma/schema.prisma`) is created `PENDING` by
+`FriendsService.sendRequest(requesterId, username)`, which does an exact-username lookup (no
+search/typeahead) and rejects self-requests and duplicates - checking **both** directions
+(`requesterId`/`addresseeId` swapped), since the DB's `@@unique([requesterId, addresseeId])`
+constraint alone only catches a duplicate in the same direction. There is deliberately no
+`DECLINED` status: declining an incoming request, cancelling an outgoing one, and unfriending an
+accepted one are all the same operation - `FriendsService.removeFriendship` just deletes the row,
+after checking the caller is a party to it. Accepting (`acceptRequest`) is restricted to the
+addressee and flips `status` to `ACCEPTED`, stamping `respondedAt`.
+
+This is a deliberate scope cut, documented here so it isn't mistaken for an oversight: there is no
+`NotificationType` for friend requests (unlike `LEVEL_UP`/`ACHIEVEMENT_UNLOCK`), so an incoming
+request only surfaces when the recipient opens the leaderboard page's "Manage Friends" modal, not
+via the notification bell.
+
+### The leaderboard comparison group
+
+`FriendsService.getFriendUserIds(userId)` - the one method `LeaderboardModule` imports
+`FriendsModule` for - returns every user id the caller has an `ACCEPTED` `Friendship` with, in
+either direction. `LeaderboardService.getLeaderboard` always ranks `[userId, ...friendUserIds]`:
+the caller always sees themselves in their own leaderboard, and the group is symmetric (if A
+removes B, B also drops out of A's group and vice versa, since it's the same row).
+
+### Ranking rules per metric (`GET /leaderboard?metric=...`)
+
+| `metric` | Ranked by | Tiebreak |
+| --- | --- | --- |
+| `LEVEL` | `User.level` desc | `User.totalXP` desc, then `username` asc |
+| `ATTRIBUTE` (`attributeKey` required) | that `Attribute.level` desc, for the given key | that attribute's `totalXP` desc, then `username` asc |
+| `XP` (`period` required) | XP earned in the period, desc | `username` asc |
+
+For `metric: 'XP'`, `ALL_TIME` reads `User.totalXP` directly rather than summing the ledger (it's
+equivalent and cheaper); every other period sums `XPTransaction.amount` with
+`skillId: null AND attributeId: null AND createdAt >= periodStart` - the same character-level
+isolation filter described in section 3, applied per user in the group via a `groupBy`.
+
+### Period boundaries are calendar-aligned, not rolling
+
+`periodStart()` (`backend/src/leaderboard/period-bounds.ts`) computes `DAY`/`WEEK`/`MONTH`/`YEAR`
+as the start of the *current UTC calendar* day/ISO week (Monday)/month/year through now - **not**
+a rolling trailing window. This is a deliberate divergence from the rolling-7-day convention
+`AnalyticsService` uses for personal stats (section 3's `weekAgo = now - 7 days`): a competitive,
+resettable leaderboard reads more naturally as "who's ahead this calendar week" than "who's ahead
+in the last 168 hours," and a calendar boundary is what lets "this week's leaderboard" mean the
+same thing to every friend looking at it, regardless of when each of them checks.
+
+## 10. Keep this file in sync
 
 This file documents **why** the gameplay mechanics work the way they do, not just what the code
 currently says - the reasoning here (full XP per tagged skill/attribute, the

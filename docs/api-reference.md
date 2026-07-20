@@ -953,6 +953,141 @@ Array<{
 
 ---
 
+## Friends (`/friends`)
+
+Friend-request graph backing the leaderboard's comparison group. All routes require a Bearer
+token. Friend lookup is by **exact username match** only (no search/typeahead). See
+`docs/gameplay-systems.md` § "Friends & Leaderboard" for the full lifecycle rationale.
+
+### `FriendProfile` shape
+
+Another user's profile as returned in friend requests, the friends list, and (in a related but
+distinct shape) the leaderboard — omits `email` and streak fields, which stay private to the
+account owner (`backend/src/common/serializers/public-user.ts`, `toFriendProfile`):
+
+```ts
+{
+  id: string;
+  username: string;
+  avatar: string | null;
+  level: number;
+  totalXP: number;
+  currentXP: number;      // derived
+  xpForNextLevel: number; // derived
+}
+```
+
+### `GET /friends`
+
+List the caller's accepted friends.
+
+Response: `200 OK`, array of `FriendProfile & { friendshipId: string; friendSince: string | null }`.
+
+### `GET /friends/requests`
+
+List the caller's pending friend requests, both directions, newest first.
+
+Response: `200 OK`, array of:
+
+```ts
+{
+  id: string;               // Friendship.id
+  status: 'PENDING';
+  direction: 'INCOMING' | 'OUTGOING'; // relative to the caller
+  createdAt: string;
+  user: FriendProfile;      // the OTHER user in the request
+}
+```
+
+### `POST /friends/requests`
+
+Send a friend request by exact username.
+
+Request body (`CreateFriendRequestDto`):
+
+```ts
+{
+  username: string; // 3-24 chars
+}
+```
+
+Response: `201 Created`, same shape as one entry from `GET /friends/requests`
+(`direction: 'OUTGOING'`).
+
+Errors:
+- `400 Bad Request` — sending a request to yourself.
+- `404 Not Found` — no user with that username.
+- `409 Conflict` — a `Friendship` row already exists between the two users in either direction
+  (already friends, you already sent a request, or they already sent you one — the message
+  distinguishes which).
+
+### `POST /friends/requests/:id/accept`
+
+Accept an incoming request. `:id` is the `Friendship.id`.
+
+Response: `200 OK`, same shape as `POST /friends/requests` but `status: 'ACCEPTED'`.
+
+Errors: `404 Not Found` if the request doesn't exist; `403 Forbidden` if the caller is not the
+addressee; `400 Bad Request` if it's not `PENDING` (e.g. already accepted).
+
+### `DELETE /friends/requests/:id`
+
+Decline an incoming request or cancel an outgoing one — both are the same operation (delete a
+`PENDING` row the caller is party to).
+
+Response: `200 OK` with `{ id: string }`.
+
+Errors: `404 Not Found`; `403 Forbidden` if the caller isn't the requester or addressee.
+
+### `DELETE /friends/:id`
+
+Remove an accepted friendship. `:id` is the `Friendship.id` (same as `friendshipId` from
+`GET /friends`). Symmetric — the friendship disappears from both users' lists and leaderboard
+groups.
+
+Response: `200 OK` with `{ id: string }`.
+
+Errors: `404 Not Found`; `403 Forbidden` if the caller isn't the requester or addressee.
+
+---
+
+## Leaderboard (`/leaderboard`)
+
+Ranks the caller against their accepted friends (see Friends above for how that group is formed).
+Requires a Bearer token.
+
+### `GET /leaderboard`
+
+Query params (`LeaderboardQueryDto`):
+
+| Param | Type | Notes |
+| --- | --- | --- |
+| `metric` | `'LEVEL' \| 'ATTRIBUTE' \| 'XP'` | Optional, default `'LEVEL'`. |
+| `attributeKey` | `AttributeKey` | Required when `metric = 'ATTRIBUTE'`, otherwise ignored/rejected. |
+| `period` | `'DAY' \| 'WEEK' \| 'MONTH' \| 'YEAR' \| 'ALL_TIME'` | Required when `metric = 'XP'`, otherwise ignored/rejected. |
+
+Response: `200 OK`, sorted descending by `value`, rank starting at 1:
+
+```ts
+Array<{
+  rank: number;
+  userId: string;
+  username: string;
+  avatar: string | null;
+  isCurrentUser: boolean;
+  value: number;          // character level, attribute level, or XP earned - depends on metric
+  characterLevel: number; // always the character level, for context even in ATTRIBUTE/XP modes
+}>
+```
+
+Errors: `400 Bad Request` — `metric: 'ATTRIBUTE'` without a valid `attributeKey`, or
+`metric: 'XP'` without a valid `period`.
+
+Ranking rules and calendar-aligned period boundaries are documented in
+`docs/gameplay-systems.md` § "Friends & Leaderboard", not repeated here.
+
+---
+
 ## CompletionResult shape
 
 `POST /quests/:id/complete`, `POST /habits/:id/complete`, and `POST /goals/:id/progress` (when

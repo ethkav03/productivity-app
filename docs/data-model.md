@@ -14,6 +14,7 @@ Two migrations exist as of this writing:
 | --- | --- |
 | `20260719141428_init` | Initial schema: `User`, `Skill`, `Goal`, `GoalSkill`, `Quest`, `QuestSkill`, `Habit`, `HabitSkill`, `HabitCompletion`, `XPTransaction`, `Achievement`, `UserAchievement`, `Notification`, and all enums except the `ATTRIBUTE_LEVEL_REACHED` achievement requirement and `AttributeKey`. At this point `Skill` uniqueness was scoped to `[userId, name]` and `XPTransaction` had no `attributeId` column. |
 | `20260719201027_attribute_hierarchy` | Introduces the `Attribute` model and the `AttributeKey` enum; adds `Skill.attributeId` (required, FK to `Attribute`) and re-scopes skill name uniqueness to `[userId, attributeId, name]`; adds `XPTransaction.attributeId` (optional, FK to `Attribute`) so XP grants can mirror into the owning attribute; adds `Achievement.attributeKey` and the `ATTRIBUTE_LEVEL_REACHED` value to `AchievementRequirementType` so achievements can target attribute-level milestones. |
+| `20260720104302_friendships` | Introduces the `Friendship` model and the `FriendshipStatus` enum (`PENDING`, `ACCEPTED`), plus `User.sentFriendRequests`/`receivedFriendRequests` relations. Backs the friends/leaderboard feature - see the `Friendship` model reference below. |
 
 `migration_lock.toml` pins the schema to the `postgresql` provider (Prisma refuses to mix
 providers across migrations once this file exists).
@@ -32,7 +33,8 @@ User ──┬── Attribute (8 fixed, auto-created at registration)
        ├── Goal, Quest, Habit, HabitCompletion  (also owned directly by User)
        ├── XPTransaction (references User, and optionally Skill and/or Attribute)
        ├── UserAchievement ──── Achievement (global, not per-user)
-       └── Notification
+       ├── Notification
+       └── Friendship (as requester or addressee) ──── the other User
 ```
 
 In words: every `User` owns 8 `Attribute` rows (one per `AttributeKey`), created automatically
@@ -44,7 +46,9 @@ recorded as `HabitCompletion` rows. Every XP grant anywhere in the app is record
 `XPTransaction`, which can reference a `User` alone (character-level XP), or also a `Skill`
 and/or that skill's `Attribute` (the XP cascade). `Achievement` definitions are global (not
 per-user) and unlocked per user via `UserAchievement`. `Notification` is a simple per-user
-inbox row.
+inbox row. `Friendship` is a single row per pair of users (not duplicated per direction) linking
+two `User`s via `requester`/`addressee`; the leaderboard's comparison group for a user is
+themselves plus everyone they have an `ACCEPTED` `Friendship` row with, in either direction.
 
 ---
 
@@ -416,6 +420,37 @@ notifications for this user" query). Maps to table `notifications`.
 
 ---
 
+### Friendship
+
+A friendship between two users, always stored as a single row regardless of direction. Starts
+`PENDING` (created by the requester) and becomes `ACCEPTED` once the addressee accepts — there is
+no `DECLINED` status; a decline, a cancel, and an unfriend are all the same operation: deleting
+the row (see `FriendsService`).
+
+| Field | Type | Default / Nullable | Notes |
+| --- | --- | --- | --- |
+| `id` | `String` (uuid) | `@default(uuid())`, PK | |
+| `requesterId` | `String` | required | FK to `User` — who sent the request. |
+| `addresseeId` | `String` | required | FK to `User` — who received it. |
+| `status` | `FriendshipStatus` | `@default(PENDING)` | See enum reference. |
+| `createdAt` | `DateTime` | `@default(now())` | When the request was sent. |
+| `respondedAt` | `DateTime?` | nullable | Set when the addressee accepts. |
+
+**Relations:** `requester` (FK `requesterId → User.id`, `onDelete: Cascade`), `addressee` (FK
+`addresseeId → User.id`, `onDelete: Cascade`).
+
+**Constraints:**
+- `@@unique([requesterId, addresseeId])` — stops a duplicate row in the *same* direction only;
+  `FriendsService.sendRequest` additionally checks the reverse direction before creating a new
+  request (A→B and B→A are the same relationship), since the DB constraint alone can't catch that.
+- `@@index([requesterId])`
+- `@@index([addresseeId])`
+
+Maps to table `friendships`. See `docs/gameplay-systems.md` for the request lifecycle and how the
+leaderboard's comparison group is derived from `ACCEPTED` rows.
+
+---
+
 ## Enum reference
 
 ### GoalType
@@ -511,6 +546,13 @@ The 8 fixed attributes every user is given at registration (see `Attribute` mode
 | `WEALTH` | Financial and career-related activity. |
 | `CREATIVITY` | Creative and artistic activity. |
 | `WISDOM` | Reflection, judgment, and life-skill activity. |
+
+### FriendshipStatus
+
+| Value | Meaning |
+| --- | --- |
+| `PENDING` | Request sent, not yet responded to (the schema default). |
+| `ACCEPTED` | Addressee accepted; both users now appear in each other's leaderboard comparison group. |
 
 ### NotificationType
 

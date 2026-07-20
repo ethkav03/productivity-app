@@ -16,6 +16,8 @@ import { QuestsModule } from './quests/quests.module';
 import { HabitsModule } from './habits/habits.module';
 import { GoalsModule } from './goals/goals.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { FriendsModule } from './friends/friends.module';
+import { LeaderboardModule } from './leaderboard/leaderboard.module';
 
 @Module({
   imports: [
@@ -34,6 +36,8 @@ import { AnalyticsModule } from './analytics/analytics.module';
     HabitsModule,
     GoalsModule,
     AnalyticsModule,
+    FriendsModule,
+    LeaderboardModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

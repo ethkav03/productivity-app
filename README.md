@@ -75,10 +75,16 @@ backend/
                               unlocks, etc.)
     quests/ habits/ goals/    Resource modules for the three activity types
     analytics/                Read-only aggregation across the XP ledger
+    friends/                  Friend-request graph (send/accept/decline/
+                              list/remove); no DECLINED status - declining,
+                              cancelling, and unfriending all just delete the row
+    leaderboard/               Ranks the caller against their accepted friends
+                              by level, attribute level, or XP earned in a
+                              calendar-aligned period
 frontend/
   app/                        Next.js App Router pages (onboarding, dashboard,
                                skills, quests, habits, goals, achievements,
-                               analytics, settings, auth)
+                               leaderboard, analytics, settings, auth)
   src/lib/api/                Typed API client functions, one file per resource
   src/lib/types.ts            Shared TypeScript types mirroring the backend
   src/hooks/                  useAuth, useCelebration (XP/level-up/achievement

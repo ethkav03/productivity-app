@@ -82,7 +82,7 @@ listed in any other module's `imports` array.
 
 | Module | Imports (from `imports: [...]`) |
 | --- | --- |
-| `AppModule` | `ConfigModule` (global), `ThrottlerModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `AttributesModule`, `SkillsModule`, `XpModule`, `ProgressionModule`, `AchievementsModule`, `NotificationsModule`, `QuestsModule`, `HabitsModule`, `GoalsModule`, `AnalyticsModule` |
+| `AppModule` | `ConfigModule` (global), `ThrottlerModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `AttributesModule`, `SkillsModule`, `XpModule`, `ProgressionModule`, `AchievementsModule`, `NotificationsModule`, `QuestsModule`, `HabitsModule`, `GoalsModule`, `AnalyticsModule`, `FriendsModule`, `LeaderboardModule` |
 | `PrismaModule` | *(none — `@Global()`, exports `PrismaService` to every other module implicitly)* |
 | `AuthModule` | `PassportModule`, `JwtModule.register({})`, `AttributesModule` |
 | `UsersModule` | *(none)* |
@@ -96,6 +96,8 @@ listed in any other module's `imports` array.
 | `HabitsModule` | `ProgressionModule`, `SkillsModule` |
 | `GoalsModule` | `ProgressionModule`, `SkillsModule`, `AchievementsModule` |
 | `AnalyticsModule` | *(none)* |
+| `FriendsModule` | *(none)* |
+| `LeaderboardModule` | `FriendsModule` |
 
 As a nested tree (excluding `PrismaModule`/`ConfigModule`, which sit outside this tree since
 they're global):
@@ -125,7 +127,10 @@ AppModule
 │   ├── ProgressionModule (see above)
 │   ├── SkillsModule
 │   └── AchievementsModule (see above)
-└── AnalyticsModule
+├── AnalyticsModule
+├── FriendsModule
+└── LeaderboardModule
+    └── FriendsModule (see above)
 ```
 
 `ProgressionModule` is the hub of the gameplay-facing side of the graph: it is the only module
@@ -454,6 +459,54 @@ Read-only aggregation over the XP ledger and related resources — no writes, no
     with `sourceTitle` (the quest/habit/goal title resolved from `sourceId`/`sourceType`).
 - **Depended on by:** nothing (only `AppModule`).
 
+### `FriendsModule` (`backend/src/friends/`)
+
+Friend-request graph: send/accept/decline/list/remove, plus the group-lookup `LeaderboardModule`
+depends on. See `docs/gameplay-systems.md` § "Friends & Leaderboard" for the lifecycle rationale
+(no `DECLINED` status, both-direction duplicate checking, etc.).
+
+- **Imports:** none.
+- **Controller:** `FriendsController` — `GET /api/friends`, `GET /api/friends/requests`,
+  `POST /api/friends/requests`, `POST /api/friends/requests/:id/accept`,
+  `DELETE /api/friends/requests/:id`, `DELETE /api/friends/:id` — all guarded.
+- **Providers:** `FriendsService` (exported — `LeaderboardModule` imports this module for it).
+  - `sendRequest(userId, username)` — exact-username lookup; rejects self-requests; checks for an
+    existing `Friendship` row in *either* direction before creating a new `PENDING` one.
+  - `listRequests(userId)` — all `PENDING` rows the user is party to, either direction, annotated
+    with `direction: 'INCOMING' | 'OUTGOING'` relative to the caller.
+  - `acceptRequest(userId, friendshipId)` — addressee-only; flips `status` to `ACCEPTED`, stamps
+    `respondedAt`.
+  - `removeFriendship(userId, friendshipId)` — deletes a row the caller is party to; this one
+    method backs decline, cancel, *and* unfriend (see the lifecycle note above).
+  - `listFriends(userId)` — all `ACCEPTED` rows, resolved to the *other* user's `FriendProfile`
+    plus `friendshipId`/`friendSince`.
+  - `getFriendUserIds(userId)` — the leaderboard's comparison group: every user id with an
+    `ACCEPTED` `Friendship` to `userId`, either direction. The one method that exists purely for
+    another module to call.
+- **Depended on by:** `LeaderboardModule`.
+
+### `LeaderboardModule` (`backend/src/leaderboard/`)
+
+Ranks the caller against their friend group on one of three metrics. Read-only; no `exports`
+(nothing depends on `LeaderboardService` itself, only on `FriendsService` via `FriendsModule`).
+
+- **Imports:** `FriendsModule` (for `FriendsService.getFriendUserIds`) — this is the one exception
+  to the "read other domains' tables directly, like `AnalyticsModule`" pattern used elsewhere in
+  the backend, because resolving a friend group involves real branching logic
+  (requester-vs-addressee direction) worth centralizing in `FriendsService` rather than
+  duplicating here.
+- **Controller:** `LeaderboardController` — `GET /api/leaderboard?metric=&attributeKey=&period=`,
+  guarded. Query validated by `LeaderboardQueryDto` (`class-validator`, conditional
+  `@ValidateIf` — `attributeKey` required iff `metric = 'ATTRIBUTE'`, `period` required iff
+  `metric = 'XP'`).
+- **Providers:** `LeaderboardService` (not exported).
+  - `getLeaderboard(userId, query)` — resolves the group via `FriendsService.getFriendUserIds`,
+    then dispatches to one of three private rankers by `query.metric`: `rankByLevel`,
+    `rankByAttribute`, `rankByXp`. Each returns entries pre-sorted and ranked (see
+    `docs/gameplay-systems.md` for the exact sort/tiebreak rules and `period-bounds.ts` for how
+    `XP`'s calendar-aligned period boundaries are computed).
+- **Depended on by:** nothing (only `AppModule`).
+
 ## 4. The `common/` layer
 
 `backend/src/common/` is plain shared TypeScript, not a Nest module — files are imported
@@ -499,6 +552,11 @@ directly wherever needed rather than injected.
   xpForNextLevel, currentStreak, longestStreak, createdAt` (notably omits `passwordHash` and
   `hashedRefreshToken`). `currentXP`/`xpForNextLevel` are derived via `calculateLevelState`,
   not stored columns. `PublicUser` is exported as `ReturnType<typeof toPublicUser>`.
+- `toFriendProfile(user)` — the same idea but for rendering a *different* user back to the
+  caller (friend requests, friends list, leaderboard entries): drops `email` and the streak
+  fields on top of what `toPublicUser` already omits, since those stay private to the account
+  owner. Used by `FriendsService`. `FriendProfile` is exported as
+  `ReturnType<typeof toFriendProfile>`.
 
 ### `filters/http-exception.filter.ts`
 

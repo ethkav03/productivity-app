@@ -4,6 +4,33 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-20 — Friends & Leaderboard
+
+Added a social layer: friend requests and a leaderboard ranking the caller against their accepted
+friends. New backend modules `friends/` (`Friendship` model + `FriendshipStatus` enum, migration
+`20260720104302_friendships`; send/accept/decline/list/remove, exact-username lookup, no
+`DECLINED` status - a decline/cancel/unfriend is just deleting the row) and `leaderboard/`
+(`GET /leaderboard?metric=LEVEL|ATTRIBUTE|XP&attributeKey=&period=`, reading `FriendsService`'s
+group lookup rather than importing nothing - the one exception to the "read other domains'
+tables directly" pattern `AnalyticsModule` otherwise established, because resolving a friend
+group needs real requester/addressee branching logic worth centralizing). XP-period ranking uses
+calendar-aligned boundaries (this UTC day/ISO week/month/year), deliberately different from the
+rolling-7-day window `AnalyticsService` uses for personal stats - see
+`docs/gameplay-systems.md` § "Friends & Leaderboard" for the full rationale.
+
+New `toFriendProfile` serializer (`backend/src/common/serializers/public-user.ts`) renders another
+user's profile back to the caller without their email/streaks, used by both the friends list and
+leaderboard entries.
+
+Frontend: new `/leaderboard` page - a three-way metric selector (Overall Level / Attribute /
+XP Earned, the latter two with a sub-select), a top-3 podium (gold/silver/bronze, graceful with
+fewer than 3 friends) with 4th-place-onward as a plain ranked list below it, and a "Manage
+Friends" modal (add by username, accept/decline incoming, cancel outgoing, remove existing) with
+an unread-incoming-request count badge on the button that opens it - reachable via a new
+"Leaderboard" nav item (`Crown` icon). Verified end-to-end with three real friended test accounts
+across all three metrics and all five XP periods, in both light and dark themes, via a headless
+Playwright run with zero console/page errors.
+
 ## 2026-07-19 — Dashboard radar chart
 
 Added a "Character Shape" radar chart to the dashboard, right below the header: one axis per

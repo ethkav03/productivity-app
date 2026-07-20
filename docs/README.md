@@ -20,7 +20,7 @@ it.
 | [`data-model.md`](./data-model.md) | Every Prisma model, field, enum, and constraint - the database schema reference. |
 | [`api-reference.md`](./api-reference.md) | Every REST endpoint: method, path, auth, request/response shapes, business-rule side effects. |
 | [`backend.md`](./backend.md) | NestJS module map - what each module owns, imports, exports, and who depends on it. |
-| [`gameplay-systems.md`](./gameplay-systems.md) | The core game mechanics in depth: the XP ledger, the attribute cascade, the leveling formula, the completion workflow, duplicate-prevention, the achievement engine. |
+| [`gameplay-systems.md`](./gameplay-systems.md) | The core game mechanics in depth: the XP ledger, the attribute cascade, the leveling formula, the completion workflow, duplicate-prevention, the achievement engine, and the friends/leaderboard social layer. |
 | [`frontend.md`](./frontend.md) | App Router routing structure, auth gating, the onboarding wizard, shared hooks, navigation shell. |
 | [`design-system.md`](./design-system.md) | Color tokens (light/dark), the attribute color palette, theming mechanism, shared UI component reference. |
 | [`mvp-spec.md`](./mvp-spec.md) | The original MVP product specification this project was built from. |

@@ -87,6 +87,13 @@ the same visual system):
 globally, so any element that sets a `border` width without an explicit color already picks up
 the themed border.
 
+**Deliberate exception:** the leaderboard podium (`frontend/app/(app)/leaderboard/page.tsx`) uses
+raw Tailwind default-palette classes (`amber-400`/`slate-300`/`orange-700`) for its 1st/2nd/3rd
+medal and ring colors instead of a token. Gold/silver/bronze is a fixed real-world convention
+independent of this app's theme, not a data-viz categorical encoding (unlike the attribute
+palette below) - so it isn't threaded through a `--token` the way every other color on this page
+is.
+
 ## 3. Attribute color palette
 
 Every one of the app's 8 fixed attributes (Physical, Intelligence, Discipline, Energy, Social,

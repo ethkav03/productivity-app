@@ -282,3 +282,44 @@ export interface AnalyticsActivityDay {
   date: string;
   count: number;
 }
+
+export type FriendshipStatus = 'PENDING' | 'ACCEPTED';
+export type FriendRequestDirection = 'INCOMING' | 'OUTGOING';
+
+/** Another user's profile as seen by the current user (friend requests, friends list, leaderboard) - no email/streaks. */
+export interface FriendProfile {
+  id: string;
+  username: string;
+  avatar: string | null;
+  level: number;
+  totalXP: number;
+  currentXP: number;
+  xpForNextLevel: number;
+}
+
+export interface Friend extends FriendProfile {
+  friendshipId: string;
+  friendSince: string | null;
+}
+
+export interface FriendRequest {
+  id: string;
+  status: FriendshipStatus;
+  direction: FriendRequestDirection;
+  createdAt: string;
+  user: FriendProfile;
+}
+
+export type LeaderboardMetric = 'LEVEL' | 'ATTRIBUTE' | 'XP';
+export type LeaderboardPeriod = 'DAY' | 'WEEK' | 'MONTH' | 'YEAR' | 'ALL_TIME';
+
+export interface LeaderboardEntry {
+  rank: number;
+  userId: string;
+  username: string;
+  avatar: string | null;
+  isCurrentUser: boolean;
+  /** The ranked value itself - character level, attribute level, or XP earned, depending on the selected metric. */
+  value: number;
+  characterLevel: number;
+}

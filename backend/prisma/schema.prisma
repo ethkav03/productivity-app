@@ -95,38 +95,72 @@ enum NotificationType {
   GOAL_MILESTONE
 }
 
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+}
+
 // ---------------------------------------------------------------------------
 // Core entities
 // ---------------------------------------------------------------------------
 
 model User {
-  id                 String   @id @default(uuid())
-  email              String   @unique
-  username           String   @unique
+  id                 String  @id @default(uuid())
+  email              String  @unique
+  username           String  @unique
   passwordHash       String
   avatar             String?
   hashedRefreshToken String?
 
-  level          Int @default(1)
-  totalXP        Int @default(0)
-  currentStreak  Int @default(0)
-  longestStreak  Int @default(0)
+  level          Int       @default(1)
+  totalXP        Int       @default(0)
+  currentStreak  Int       @default(0)
+  longestStreak  Int       @default(0)
   lastActivityAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  skills            Skill[]
-  attributes        Attribute[]
-  goals             Goal[]
-  quests            Quest[]
-  habits            Habit[]
-  habitCompletions  HabitCompletion[]
-  xpTransactions    XPTransaction[]
-  userAchievements  UserAchievement[]
-  notifications     Notification[]
+  skills                 Skill[]
+  attributes             Attribute[]
+  goals                  Goal[]
+  quests                 Quest[]
+  habits                 Habit[]
+  habitCompletions       HabitCompletion[]
+  xpTransactions         XPTransaction[]
+  userAchievements       UserAchievement[]
+  notifications          Notification[]
+  sentFriendRequests     Friendship[]      @relation("FriendshipRequester")
+  receivedFriendRequests Friendship[]      @relation("FriendshipAddressee")
 
   @@map("users")
+}
+
+/// A friendship between two users, always stored as a single row regardless
+/// of direction. Starts PENDING (created by the requester) and becomes
+/// ACCEPTED once the addressee accepts - there is no DECLINED status, a
+/// decline/cancel/unfriend is just deleting the row (see FriendsService).
+/// The leaderboard's comparison group for a user is themselves plus every
+/// user they have an ACCEPTED Friendship row with, in either direction.
+model Friendship {
+  id          String           @id @default(uuid())
+  requesterId String
+  addresseeId String
+  status      FriendshipStatus @default(PENDING)
+
+  createdAt   DateTime  @default(now())
+  respondedAt DateTime?
+
+  requester User @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  addressee User @relation("FriendshipAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+
+  // Only stops a duplicate row in the SAME direction - the service layer
+  // additionally checks the reverse direction before creating a new request,
+  // since A->B and B->A are logically the same relationship.
+  @@unique([requesterId, addresseeId])
+  @@index([requesterId])
+  @@index([addresseeId])
+  @@map("friendships")
 }
 
 /// The 8 top-level character attributes (Physical, Intelligence, ...). Every
@@ -188,7 +222,7 @@ model Skill {
 }
 
 model Goal {
-  id          String  @id @default(uuid())
+  id          String     @id @default(uuid())
   userId      String
   title       String
   description String?
@@ -196,14 +230,14 @@ model Goal {
   type        GoalType   @default(BINARY)
   status      GoalStatus @default(ACTIVE)
 
-  targetValue    Float?
-  currentValue   Float   @default(0)
-  unit           String?
+  targetValue  Float?
+  currentValue Float   @default(0)
+  unit         String?
 
   xpReward Int @default(500)
 
-  startDate  DateTime  @default(now())
-  targetDate DateTime?
+  startDate   DateTime  @default(now())
+  targetDate  DateTime?
   completedAt DateTime?
 
   createdAt DateTime @default(now())
@@ -240,9 +274,9 @@ model Quest {
   difficulty QuestDifficulty @default(MEDIUM)
   status     QuestStatus     @default(ACTIVE)
 
-  xpReward     Int
-  deadline     DateTime?
-  completedAt  DateTime?
+  xpReward        Int
+  deadline        DateTime?
+  completedAt     DateTime?
   lastCompletedAt DateTime?
 
   createdAt DateTime @default(now())
@@ -346,15 +380,15 @@ model XPTransaction {
 }
 
 model Achievement {
-  id                String                     @id @default(uuid())
-  key               String                     @unique
-  name              String
-  description       String
-  icon              String?
-  requirementType   AchievementRequirementType
-  requirementValue  Int
-  skillName         String?
-  attributeKey      AttributeKey?
+  id               String                     @id @default(uuid())
+  key              String                     @unique
+  name             String
+  description      String
+  icon             String?
+  requirementType  AchievementRequirementType
+  requirementValue Int
+  skillName        String?
+  attributeKey     AttributeKey?
 
   createdAt DateTime @default(now())
 
