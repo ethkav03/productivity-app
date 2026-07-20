@@ -4,6 +4,16 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-20 — Leaderboard attribute filter: dropdown → icon radio group
+
+Replaced the `<Select>` dropdown for the leaderboard's Attribute mode with a `role="radiogroup"`
+of per-attribute icon circles (same icon set and categorical color as the Skills page's attribute
+badges), reusing each page's established local `ATTRIBUTE_ICON_MAP`/`resolveIcon` pattern rather
+than extracting a shared component. Unselected attributes render as icon-only circles; the
+selected one expands into a pill showing the icon plus the attribute's name, with a colored ring
+(via inline `boxShadow`, since the ring color is per-attribute and can't be a static Tailwind
+class) as the selection indicator.
+
 ## 2026-07-20 — Admin dashboard
 
 Added a `/admin` dashboard for manually editing anything in the app: users (profile fields,

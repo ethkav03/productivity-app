@@ -2,7 +2,22 @@
 
 import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Crown, Medal, Trash2, UserPlus, Users } from 'lucide-react';
+import {
+  Brain,
+  Compass,
+  Crown,
+  Dumbbell,
+  LucideIcon,
+  Medal,
+  Palette,
+  Shield,
+  Sparkles,
+  Trash2,
+  UserPlus,
+  Users,
+  Wallet,
+  Zap,
+} from 'lucide-react';
 import { getApiErrorMessage } from '@/lib/api-client';
 import { getAttributes } from '@/lib/api/attributes';
 import {
@@ -15,15 +30,32 @@ import {
   sendFriendRequest,
 } from '@/lib/api/friends';
 import { getLeaderboard } from '@/lib/api/leaderboard';
+import { attributeColor } from '@/lib/attribute-colors';
 import { AttributeKey, LeaderboardEntry, LeaderboardPeriod } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Input, Label, Select } from '@/components/ui/input';
+import { Input, Label } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { PageSpinner, Spinner } from '@/components/ui/spinner';
 import { useToast } from '@/components/ui/toaster';
+
+const ATTRIBUTE_ICON_MAP: Record<string, LucideIcon> = {
+  dumbbell: Dumbbell,
+  brain: Brain,
+  shield: Shield,
+  zap: Zap,
+  users: Users,
+  wallet: Wallet,
+  palette: Palette,
+  compass: Compass,
+};
+
+function resolveAttributeIcon(icon: string | null | undefined): LucideIcon {
+  if (icon && ATTRIBUTE_ICON_MAP[icon]) return ATTRIBUTE_ICON_MAP[icon];
+  return Sparkles;
+}
 
 type MetricTab = 'LEVEL' | 'ATTRIBUTE' | 'XP';
 
@@ -126,17 +158,34 @@ export default function LeaderboardPage() {
         </div>
 
         {metricTab === 'ATTRIBUTE' && (
-          <Select
-            value={effectiveAttributeKey ?? ''}
-            onChange={(event) => setAttributeKey(event.target.value as AttributeKey)}
-            className="w-auto"
-          >
-            {(attributesQuery.data ?? []).map((attribute) => (
-              <option key={attribute.key} value={attribute.key}>
-                {attribute.name}
-              </option>
-            ))}
-          </Select>
+          <div role="radiogroup" aria-label="Filter by attribute" className="flex flex-wrap items-center gap-2">
+            {(attributesQuery.data ?? []).map((attribute) => {
+              const Icon = resolveAttributeIcon(attribute.icon);
+              const isSelected = attribute.key === effectiveAttributeKey;
+              return (
+                <button
+                  key={attribute.key}
+                  type="button"
+                  role="radio"
+                  aria-checked={isSelected}
+                  aria-label={attribute.name}
+                  title={attribute.name}
+                  onClick={() => setAttributeKey(attribute.key)}
+                  style={{
+                    backgroundColor: attributeColor(attribute.key, 0.15),
+                    color: attributeColor(attribute.key),
+                    boxShadow: isSelected ? `0 0 0 2px ${attributeColor(attribute.key)}` : undefined,
+                  }}
+                  className={`flex h-9 shrink-0 items-center gap-1.5 rounded-full transition-all ${
+                    isSelected ? 'px-3' : 'w-9 justify-center'
+                  }`}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  {isSelected && <span className="text-xs font-semibold">{attribute.name}</span>}
+                </button>
+              );
+            })}
+          </div>
         )}
 
         {metricTab === 'XP' && (
