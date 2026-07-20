@@ -82,7 +82,7 @@ listed in any other module's `imports` array.
 
 | Module | Imports (from `imports: [...]`) |
 | --- | --- |
-| `AppModule` | `ConfigModule` (global), `ThrottlerModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `AttributesModule`, `SkillsModule`, `XpModule`, `ProgressionModule`, `AchievementsModule`, `NotificationsModule`, `QuestsModule`, `HabitsModule`, `GoalsModule`, `AnalyticsModule`, `FriendsModule`, `LeaderboardModule` |
+| `AppModule` | `ConfigModule` (global), `ThrottlerModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `AttributesModule`, `SkillsModule`, `XpModule`, `ProgressionModule`, `AchievementsModule`, `NotificationsModule`, `QuestsModule`, `HabitsModule`, `GoalsModule`, `AnalyticsModule`, `FriendsModule`, `LeaderboardModule`, `AdminModule` |
 | `PrismaModule` | *(none — `@Global()`, exports `PrismaService` to every other module implicitly)* |
 | `AuthModule` | `PassportModule`, `JwtModule.register({})`, `AttributesModule` |
 | `UsersModule` | *(none)* |
@@ -98,6 +98,7 @@ listed in any other module's `imports` array.
 | `AnalyticsModule` | *(none)* |
 | `FriendsModule` | *(none)* |
 | `LeaderboardModule` | `FriendsModule` |
+| `AdminModule` | `XpModule`, `AchievementsModule`, `NotificationsModule` |
 
 As a nested tree (excluding `PrismaModule`/`ConfigModule`, which sit outside this tree since
 they're global):
@@ -129,8 +130,12 @@ AppModule
 │   └── AchievementsModule (see above)
 ├── AnalyticsModule
 ├── FriendsModule
-└── LeaderboardModule
-    └── FriendsModule (see above)
+├── LeaderboardModule
+│   └── FriendsModule (see above)
+└── AdminModule
+    ├── XpModule (see above)
+    ├── AchievementsModule (see above)
+    └── NotificationsModule
 ```
 
 `ProgressionModule` is the hub of the gameplay-facing side of the graph: it is the only module
@@ -284,8 +289,13 @@ The centralized XP ledger. No controller — it is a pure backend service consum
     each skill, and each attribute in turn. Throws `BadRequestException` if `amount <= 0`.
   - `getRecentActivity(userId, limit = 20)` — most recent `XPTransaction` rows for a user,
     including a minimal `skill` relation.
-- **Depended on by:** `ProgressionModule` (the only consumer — nothing else touches
-  `XpService` directly, by design; see `ProgressionModule` below).
+  - `applyCorrection(params)` — a direct, out-of-band ledger correction: the only place `amount`
+    may be negative. Unlike `awardXp`, it never cascades — it touches exactly the character or
+    exactly one named attribute (never both, never any skills), since a correction isn't tied to
+    completing anything. Used by `AdminModule` to back the admin dashboard's XP/level editor.
+- **Depended on by:** `ProgressionModule` (via `awardXp`) and `AdminModule` (via
+  `applyCorrection`) — the only two consumers, by design; nothing else touches `XpService`
+  directly.
 
 ### `ProgressionModule` (`backend/src/progression/`)
 
@@ -480,6 +490,9 @@ depends on. See `docs/gameplay-systems.md` § "Friends & Leaderboard" for the li
     method backs decline, cancel, *and* unfriend (see the lifecycle note above).
   - `listFriends(userId)` — all `ACCEPTED` rows, resolved to the *other* user's `FriendProfile`
     plus `friendshipId`/`friendSince`.
+  - `getSuggestions(userId, limit)` — other users with *no* existing `Friendship` row against the
+    caller (any status, either direction), ranked by `totalXP` desc then `username` asc, capped
+    to `limit`. Backs the "Suggested Friends" section of the frontend's Manage Friends modal.
   - `getFriendUserIds(userId)` — the leaderboard's comparison group: every user id with an
     `ACCEPTED` `Friendship` to `userId`, either direction. The one method that exists purely for
     another module to call.
@@ -505,6 +518,44 @@ Ranks the caller against their friend group on one of three metrics. Read-only; 
     `rankByAttribute`, `rankByXp`. Each returns entries pre-sorted and ranked (see
     `docs/gameplay-systems.md` for the exact sort/tiebreak rules and `period-bounds.ts` for how
     `XP`'s calendar-aligned period boundaries are computed).
+- **Depended on by:** nothing (only `AppModule`).
+
+### `AdminModule` (`backend/src/admin/`)
+
+Manual data-editing surface for the `/admin` frontend dashboard. Every route is guarded by both
+`JwtAuthGuard` (must be logged in) and `AdminGuard` (must have `User.isAdmin === true`, checked
+fresh from the database on every request rather than trusted from a JWT claim). No `exports` —
+nothing else in the backend depends on `AdminService`.
+
+- **Imports:** `XpModule` (for `XpService.applyCorrection`), `AchievementsModule` (for
+  `checkAndUnlock`/`findAll`), `NotificationsModule` (for `LEVEL_UP`/`ACHIEVEMENT_UNLOCK`
+  notifications on corrections/grants).
+- **Guard:** `AdminGuard` (`guards/admin.guard.ts`) — a `CanActivate` that reads `request.user`
+  (populated by `JwtAuthGuard`, which must run first in the `@UseGuards(...)` list) and looks up
+  `isAdmin` by id; throws `ForbiddenException` if missing or `false`.
+- **Controller:** `AdminController` — `GET/PATCH/DELETE /api/admin/users/:id`,
+  `GET /api/admin/users?search=`, `POST /api/admin/users/:id/xp`,
+  `POST/DELETE /api/admin/users/:id/achievements[/:achievementId]`,
+  `GET /api/admin/achievements`, `GET/POST /api/admin/friendships`,
+  `PATCH /api/admin/friendships/:id/accept`, `DELETE /api/admin/friendships/:id`.
+- **Providers:** `AdminService` (not exported).
+  - `listUsers(search?)` / `getUserDetail(id)` / `updateUser(id, callerId, dto)` /
+    `deleteUser(id, callerId)` — user CRUD via `toPublicUser`; `updateUser`/`deleteUser` both take
+    `callerId` to block an admin from revoking their own `isAdmin` flag or deleting their own
+    account (the two self-lockout footguns this tool would otherwise allow).
+  - `adjustXp(id, dto)` — resolves `dto.attributeKey` to that user's `Attribute` row (if set),
+    calls `XpService.applyCorrection`, raises a `LEVEL_UP` notification on a character-scoped
+    level-up, then always runs `AchievementsService.checkAndUnlock` (so a correction can unlock
+    real achievements, same as organic play).
+  - `listAchievements()` / `grantAchievement(userId, achievementId)` /
+    `revokeAchievement(userId, achievementId)` — thin wrappers over `AchievementsService.findAll`
+    and direct `UserAchievement` create/delete, bypassing the normal condition check entirely
+    (that's the point of a manual grant/revoke tool).
+  - `listFriendships()` / `createFriendship(dto)` / `acceptFriendship(id)` /
+    `deleteFriendship(id)` — the same duplicate-checking/serialization logic as `FriendsService`,
+    but for **any** pair of users by username rather than the caller's own relationships; not
+    implemented by reusing `FriendsService` since every one of its methods is written relative to
+    "the caller," which doesn't apply here.
 - **Depended on by:** nothing (only `AppModule`).
 
 ## 4. The `common/` layer
@@ -549,9 +600,11 @@ directly wherever needed rather than injected.
 
 - `toPublicUser(user)` — maps a full Prisma `User` row down to the public shape returned by
   auth/profile endpoints: `id, email, username, avatar, level, totalXP, currentXP,
-  xpForNextLevel, currentStreak, longestStreak, createdAt` (notably omits `passwordHash` and
-  `hashedRefreshToken`). `currentXP`/`xpForNextLevel` are derived via `calculateLevelState`,
-  not stored columns. `PublicUser` is exported as `ReturnType<typeof toPublicUser>`.
+  xpForNextLevel, currentStreak, longestStreak, createdAt, isAdmin` (notably omits
+  `passwordHash` and `hashedRefreshToken`). `currentXP`/`xpForNextLevel` are derived via
+  `calculateLevelState`, not stored columns. `PublicUser` is exported as
+  `ReturnType<typeof toPublicUser>`. Also reused directly by `AdminModule` (the admin dashboard's
+  user list/detail views are this same shape).
 - `toFriendProfile(user)` — the same idea but for rendering a *different* user back to the
   caller (friend requests, friends list, leaderboard entries): drops `email` and the streak
   fields on top of what `toPublicUser` already omits, since those stay private to the account

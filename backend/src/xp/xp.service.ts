@@ -1,7 +1,15 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { calculateLevelState } from '../common/leveling';
-import { AttributeXpResult, AwardXpParams, LevelChangeResult, SkillXpResult, XpAwardResult } from './xp.types';
+import {
+  ApplyCorrectionParams,
+  AttributeXpResult,
+  AwardXpParams,
+  CorrectionResult,
+  LevelChangeResult,
+  SkillXpResult,
+  XpAwardResult,
+} from './xp.types';
 
 /**
  * Centralised XP ledger. Every source of XP in the app (quests, habits,
@@ -92,6 +100,72 @@ export class XpService {
       }
 
       return { xpGained: amount, character, skills, attributes };
+    });
+  }
+
+  /**
+   * A direct, out-of-band ledger correction - the only place `amount` may be
+   * negative (per the `XPTransaction.amount` field comment in the schema).
+   * Unlike `awardXp`, this never cascades: it touches exactly one of the
+   * character or a single named attribute, never both and never any skills,
+   * since a correction isn't tied to completing anything. Used by the admin
+   * dashboard to directly adjust a user's level.
+   */
+  async applyCorrection(params: ApplyCorrectionParams): Promise<CorrectionResult> {
+    const { userId, amount, note, attributeId } = params;
+    if (amount === 0) {
+      throw new BadRequestException('Correction amount must not be zero');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.xPTransaction.create({
+        data: {
+          userId,
+          amount,
+          sourceType: 'CORRECTION',
+          note: note ?? 'Admin correction',
+          attributeId: attributeId ?? null,
+        },
+      });
+
+      if (attributeId) {
+        const attribute = await tx.attribute.findUniqueOrThrow({ where: { id: attributeId } });
+        const previousState = calculateLevelState(attribute.totalXP);
+        const newTotalXp = Math.max(0, attribute.totalXP + amount);
+        const newState = calculateLevelState(newTotalXp);
+
+        await tx.attribute.update({
+          where: { id: attributeId },
+          data: { totalXP: newTotalXp, level: newState.level },
+        });
+
+        return {
+          scope: 'ATTRIBUTE',
+          attributeId,
+          previousLevel: previousState.level,
+          newLevel: newState.level,
+          leveledUp: newState.level > previousState.level,
+          totalXP: newTotalXp,
+        };
+      }
+
+      const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
+      const previousState = calculateLevelState(user.totalXP);
+      const newTotalXp = Math.max(0, user.totalXP + amount);
+      const newState = calculateLevelState(newTotalXp);
+
+      await tx.user.update({
+        where: { id: userId },
+        data: { totalXP: newTotalXp, level: newState.level },
+      });
+
+      return {
+        scope: 'CHARACTER',
+        previousLevel: previousState.level,
+        newLevel: newState.level,
+        leveledUp: newState.level > previousState.level,
+        totalXP: newTotalXp,
+      };
     });
   }
 

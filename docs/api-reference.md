@@ -184,8 +184,8 @@ Errors: `409 Conflict` if `username` is already taken by another user.
 
 ### PublicUser shape
 
-Returned by `register`, `login`, `refresh`, `GET /users/me`, and `PATCH /users/me`
-(`backend/src/common/serializers/public-user.ts`):
+Returned by `register`, `login`, `refresh`, `GET /users/me`, `PATCH /users/me`, and every
+`/admin/users` route (`backend/src/common/serializers/public-user.ts`):
 
 ```ts
 {
@@ -200,6 +200,7 @@ Returned by `register`, `login`, `refresh`, `GET /users/me`, and `PATCH /users/m
   currentStreak: number;
   longestStreak: number;
   createdAt: string; // ISO date
+  isAdmin: boolean;   // gates the /admin API and frontend route - see the Admin section below
 }
 ```
 
@@ -983,6 +984,21 @@ List the caller's accepted friends.
 
 Response: `200 OK`, array of `FriendProfile & { friendshipId: string; friendSince: string | null }`.
 
+### `GET /friends/suggestions`
+
+Candidates for a "Suggested Friends" list: other users with no existing `Friendship` row against
+the caller (any status, either direction) — never overlaps with someone already friended,
+requested, or pending. Ranked by `totalXP` desc (then `username` asc) as a simple "notable
+characters" proxy, since there's no mutual-friends graph to rank by.
+
+Query params:
+
+| Param   | Type   | Notes                                                          |
+| ------- | ------ | ----------------------------------------------------------------- |
+| `limit` | number | Optional, default `6`. Clamped to `[1, 20]`. Non-numeric input falls back to `6`. |
+
+Response: `200 OK`, array of `FriendProfile`.
+
 ### `GET /friends/requests`
 
 List the caller's pending friend requests, both directions, newest first.
@@ -1085,6 +1101,188 @@ Errors: `400 Bad Request` — `metric: 'ATTRIBUTE'` without a valid `attributeKe
 
 Ranking rules and calendar-aligned period boundaries are documented in
 `docs/gameplay-systems.md` § "Friends & Leaderboard", not repeated here.
+
+---
+
+## Admin (`/admin`)
+
+Manual data-editing surface for the `/admin` frontend dashboard: users, XP/levels, friendships,
+and achievements. Every route requires a Bearer token **and** `User.isAdmin === true` on the
+caller - enforced by `AdminGuard`, which looks the flag up fresh from the database on every
+request (not from a JWT claim), so revoking admin access takes effect immediately rather than
+waiting for the token to expire. A non-admin caller gets `403 Forbidden` from every route below,
+regardless of whether the resource it names exists.
+
+There is no self-service way to become an admin - the first admin is set directly in the
+database; after that, an existing admin can grant it to another account via
+`PATCH /admin/users/:id`.
+
+### `GET /admin/users`
+
+List every user in the system.
+
+Query params:
+
+| Param | Type | Notes |
+| --- | --- | --- |
+| `search` | string | Optional, case-insensitive substring match against `username` OR `email`. |
+
+Response: `200 OK`, array of `PublicUser` (see the Users section above - the admin view includes
+`email` and `isAdmin`, same shape returned to the account owner themselves).
+
+### `GET /admin/users/:id`
+
+Full detail view for one user.
+
+Response: `200 OK`, `PublicUser` plus:
+
+```ts
+{
+  skillCount: number;
+  friendCount: number;       // ACCEPTED friendships only
+  attributes: Array<{ id: string; key: AttributeKey; name: string; level: number; totalXP: number }>;
+  unlockedAchievements: Array<{ id: string; achievementId: string; unlockedAt: string; achievement: Achievement }>;
+}
+```
+
+Errors: `404 Not Found`.
+
+### `PATCH /admin/users/:id`
+
+Edit any user's profile fields, or toggle their admin access.
+
+Request body (`AdminUpdateUserDto`, all fields optional):
+
+```ts
+{
+  username?: string;  // 3-24 chars, /^[a-zA-Z0-9_]+$/
+  email?: string;      // @IsEmail
+  avatar?: string;     // @IsUrl({ require_tld: false })
+  isAdmin?: boolean;
+}
+```
+
+Response: `200 OK` with the updated `PublicUser`.
+
+Errors: `404 Not Found`; `409 Conflict` if `username`/`email` is already taken by another user;
+`400 Bad Request` if the caller sets `isAdmin: false` on **their own** account (self-demotion is
+blocked so an admin can't accidentally lock themselves out).
+
+### `DELETE /admin/users/:id`
+
+Delete any user account. Cascades to every dependent row (skills, quests, habits, goals,
+attributes, XP ledger, friendships, notifications - `onDelete: Cascade` throughout the schema).
+
+Response: `200 OK` with `{ id: string; deleted: true }`.
+
+Errors: `404 Not Found`; `400 Bad Request` if the caller targets **their own** account
+(self-deletion is blocked for the same reason as self-demotion above).
+
+### `POST /admin/users/:id/xp`
+
+Directly adjust a user's character XP, or one attribute's XP, via `XpService.applyCorrection` -
+the same ledger-backed correction path documented in `docs/gameplay-systems.md`. Unlike normal
+gameplay XP, the amount here **may be negative** (per the `XPTransaction.amount` field comment in
+the schema); this is the first real consumer of the `CORRECTION` source type. A correction never
+cascades: it touches exactly the character or exactly one named attribute, never both and never
+any skills, since it isn't tied to completing anything.
+
+Request body (`AdminAdjustXpDto`):
+
+```ts
+{
+  amount: number;              // @IsInt - positive or negative, validated non-zero server-side
+  attributeKey?: AttributeKey; // if set, adjusts this attribute directly instead of the character
+  note?: string;                // max 280 chars, defaults to "Admin correction" if omitted
+}
+```
+
+Response: `200 OK`:
+
+```ts
+{
+  scope: 'CHARACTER' | 'ATTRIBUTE';
+  attributeId?: string;
+  previousLevel: number;
+  newLevel: number;
+  leveledUp: boolean;
+  totalXP: number; // clamped to a minimum of 0
+}
+```
+
+Side effects: if the correction is character-scoped and causes a level-up, a `LEVEL_UP`
+notification is raised (matching the normal completion workflow). `AchievementsService.checkAndUnlock`
+always runs afterward, so a correction can unlock real achievements (e.g. `ATTRIBUTE_LEVEL_REACHED`).
+
+Errors: `404 Not Found` — the user, or the named attribute for that user (all users have all 8, so
+this only happens for a bad `attributeKey`, never a valid enum value); `400 Bad Request` if
+`amount` resolves to `0`.
+
+### `GET /admin/achievements`
+
+List every achievement definition (same as `GET /achievements`, exposed here too so the admin UI
+doesn't need a second auth path).
+
+### `POST /admin/users/:id/achievements`
+
+Force-unlock an achievement for a user, bypassing its condition entirely.
+
+Request body (`AdminGrantAchievementDto`): `{ achievementId: string }` (`@IsUUID`).
+
+Response: `201 Created`, a `UserAchievement` row with the nested `achievement`. Also raises an
+`ACHIEVEMENT_UNLOCK` notification, same as an organically-unlocked achievement.
+
+Errors: `404 Not Found` — user or achievement; `409 Conflict` — already unlocked.
+
+### `DELETE /admin/users/:id/achievements/:achievementId`
+
+Revoke a previously unlocked (organic or granted) achievement.
+
+Response: `200 OK` with `{ userId: string; achievementId: string; revoked: true }`.
+
+Errors: `404 Not Found` if the user hasn't unlocked that achievement.
+
+### `GET /admin/friendships`
+
+List every `Friendship` row in the system, any status, both parties resolved to
+`{ id, username, avatar, level }`.
+
+### `POST /admin/friendships`
+
+Create a friendship between any two users by username, skipping the request/accept dance -
+useful for wiring up test data. Runs the same both-direction duplicate check as the normal
+`POST /friends/requests`.
+
+Request body (`AdminCreateFriendshipDto`):
+
+```ts
+{
+  requesterUsername: string;
+  addresseeUsername: string;
+  status?: 'PENDING' | 'ACCEPTED'; // defaults to ACCEPTED
+}
+```
+
+Response: `201 Created`, an `AdminFriendship` (requester/addressee both resolved).
+
+Errors: `404 Not Found` — either username; `400 Bad Request` — same user for both fields;
+`409 Conflict` — a `Friendship` row already exists between them in either direction.
+
+### `PATCH /admin/friendships/:id/accept`
+
+Force-accept a `PENDING` friendship without going through the addressee.
+
+Response: `200 OK`, the updated `AdminFriendship`.
+
+Errors: `404 Not Found`; `400 Bad Request` if it's already `ACCEPTED`.
+
+### `DELETE /admin/friendships/:id`
+
+Remove any friendship (pending or accepted) between any two users.
+
+Response: `200 OK` with `{ id: string; deleted: true }`.
+
+Errors: `404 Not Found`.
 
 ---
 

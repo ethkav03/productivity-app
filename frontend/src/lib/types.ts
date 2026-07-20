@@ -13,6 +13,7 @@ export interface PublicUser {
   currentStreak: number;
   longestStreak: number;
   createdAt: string;
+  isAdmin: boolean;
 }
 
 export type AttributeKey =
@@ -322,4 +323,57 @@ export interface LeaderboardEntry {
   /** The ranked value itself - character level, attribute level, or XP earned, depending on the selected metric. */
   value: number;
   characterLevel: number;
+}
+
+/** GET /admin/users, and the shape returned by most /admin/users/:id mutations - same as PublicUser. */
+export type AdminUserSummary = PublicUser;
+
+export interface AdminAttributeSummary {
+  id: string;
+  key: AttributeKey;
+  name: string;
+  level: number;
+  totalXP: number;
+}
+
+export interface AdminUnlockedAchievement {
+  id: string;
+  achievementId: string;
+  unlockedAt: string;
+  achievement: Achievement;
+}
+
+/** GET /admin/users/:id */
+export interface AdminUserDetail extends PublicUser {
+  skillCount: number;
+  friendCount: number;
+  attributes: AdminAttributeSummary[];
+  unlockedAchievements: AdminUnlockedAchievement[];
+}
+
+/** POST /admin/users/:id/xp */
+export interface AdminCorrectionResult {
+  scope: 'CHARACTER' | 'ATTRIBUTE';
+  attributeId?: string;
+  previousLevel: number;
+  newLevel: number;
+  leveledUp: boolean;
+  totalXP: number;
+}
+
+export interface AdminFriendshipParty {
+  id: string;
+  username: string;
+  avatar: string | null;
+  level: number;
+}
+
+/** GET /admin/friendships, and the create/accept mutations - admin can see/act on any pair, not just their own. */
+export interface AdminFriendship {
+  id: string;
+  status: FriendshipStatus;
+  createdAt: string;
+  respondedAt: string | null;
+  requester: AdminFriendshipParty;
+  addressee: AdminFriendshipParty;
 }

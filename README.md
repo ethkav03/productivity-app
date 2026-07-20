@@ -81,10 +81,17 @@ backend/
     leaderboard/               Ranks the caller against their accepted friends
                               by level, attribute level, or XP earned in a
                               calendar-aligned period
+    admin/                    Admin-only data editor (users, XP/levels,
+                              friendships, achievements) - gated by
+                              User.isAdmin, checked fresh from the DB
+                              on every request, not a JWT claim
 frontend/
   app/                        Next.js App Router pages (onboarding, dashboard,
                                skills, quests, habits, goals, achievements,
                                leaderboard, analytics, settings, auth)
+  app/admin/                  Admin dashboard (own layout, not AppShell) -
+                               reachable via the Topbar account menu when
+                               the logged-in user is an admin
   src/lib/api/                Typed API client functions, one file per resource
   src/lib/types.ts            Shared TypeScript types mirroring the backend
   src/hooks/                  useAuth, useCelebration (XP/level-up/achievement

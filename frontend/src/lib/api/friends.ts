@@ -1,8 +1,14 @@
 import { apiClient } from '../api-client';
-import { Friend, FriendRequest } from '../types';
+import { Friend, FriendProfile, FriendRequest } from '../types';
 
 export async function getFriends() {
   const { data } = await apiClient.get<Friend[]>('/friends');
+  return data;
+}
+
+/** Other users with no existing friendship/request against the caller (any status, either direction) - candidates to add. */
+export async function getFriendSuggestions(limit = 6) {
+  const { data } = await apiClient.get<FriendProfile[]>('/friends/suggestions', { params: { limit } });
   return data;
 }
 

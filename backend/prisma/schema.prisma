@@ -111,6 +111,7 @@ model User {
   passwordHash       String
   avatar             String?
   hashedRefreshToken String?
+  isAdmin            Boolean @default(false)
 
   level          Int       @default(1)
   totalXP        Int       @default(0)

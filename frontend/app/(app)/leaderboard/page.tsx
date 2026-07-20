@@ -10,6 +10,7 @@ import {
   declineFriendRequest,
   getFriendRequests,
   getFriends,
+  getFriendSuggestions,
   removeFriend,
   sendFriendRequest,
 } from '@/lib/api/friends';
@@ -266,6 +267,11 @@ function ManageFriendsModal({ open, onClose }: { open: boolean; onClose: () => v
 
   const friendsQuery = useQuery({ queryKey: ['friends'], queryFn: getFriends, enabled: open });
   const requestsQuery = useQuery({ queryKey: ['friends', 'requests'], queryFn: getFriendRequests, enabled: open });
+  const suggestionsQuery = useQuery({
+    queryKey: ['friends', 'suggestions'],
+    queryFn: () => getFriendSuggestions(),
+    enabled: open,
+  });
 
   function invalidateAll() {
     queryClient.invalidateQueries({ queryKey: ['friends'] });
@@ -341,6 +347,35 @@ function ManageFriendsModal({ open, onClose }: { open: boolean; onClose: () => v
             </Button>
           </div>
         </form>
+
+        {!suggestionsQuery.isLoading && (suggestionsQuery.data ?? []).length > 0 && (
+          <div>
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">Suggested friends</p>
+            <ul className="space-y-2">
+              {(suggestionsQuery.data ?? []).map((suggestion) => (
+                <li
+                  key={suggestion.id}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2.5"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">{suggestion.username}</p>
+                    <p className="text-xs text-muted">Level {suggestion.level}</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="shrink-0"
+                    loading={sendMutation.isPending && sendMutation.variables === suggestion.username}
+                    onClick={() => sendMutation.mutate(suggestion.username)}
+                  >
+                    <UserPlus className="h-3.5 w-3.5" />
+                    Add
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {incoming.length > 0 && (
           <div>

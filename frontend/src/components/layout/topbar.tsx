@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bell, LogOut, User as UserIcon } from 'lucide-react';
+import { Bell, LogOut, ShieldAlert, User as UserIcon } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { getNotifications, markAllNotificationsRead, markNotificationRead } from '@/lib/api/notifications';
 import { ProgressBar } from '@/components/ui/progress-bar';
@@ -110,6 +111,16 @@ export function Topbar() {
               <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
               <div className="absolute right-0 z-20 mt-2 w-48 rounded-xl border border-border bg-surface p-1.5 shadow-glow">
                 <p className="truncate px-2 py-1.5 text-xs font-medium text-muted">{user.username}</p>
+                {user.isAdmin && (
+                  <Link
+                    href="/admin"
+                    onClick={() => setMenuOpen(false)}
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-foreground hover:bg-surface-hover"
+                  >
+                    <ShieldAlert className="h-3.5 w-3.5" />
+                    Admin Dashboard
+                  </Link>
+                )}
                 <button
                   onClick={logout}
                   className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-danger hover:bg-surface-hover"

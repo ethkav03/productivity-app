@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { Friendship, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { toFriendProfile } from '../common/serializers/public-user';
+import { FriendProfile, toFriendProfile } from '../common/serializers/public-user';
 
 type FriendshipWithUsers = Friendship & { requester: User; addressee: User };
 
@@ -100,6 +100,34 @@ export class FriendsService {
         ...toFriendProfile(other),
       };
     });
+  }
+
+  /**
+   * Candidates for a "Suggested Friends" list: other users with no existing
+   * Friendship row against the caller (any status, either direction), so
+   * suggestions never overlap with someone already friended, requested, or
+   * pending. Ranked by totalXP as a simple "notable characters" proxy, since
+   * there is no mutual-friends/social graph to rank by.
+   */
+  async getSuggestions(userId: string, limit: number): Promise<FriendProfile[]> {
+    const existingRelations = await this.prisma.friendship.findMany({
+      where: { OR: [{ requesterId: userId }, { addresseeId: userId }] },
+      select: { requesterId: true, addresseeId: true },
+    });
+
+    const excludedIds = new Set<string>([userId]);
+    for (const relation of existingRelations) {
+      excludedIds.add(relation.requesterId);
+      excludedIds.add(relation.addresseeId);
+    }
+
+    const candidates = await this.prisma.user.findMany({
+      where: { id: { notIn: Array.from(excludedIds) } },
+      orderBy: [{ totalXP: 'desc' }, { username: 'asc' }],
+      take: limit,
+    });
+
+    return candidates.map((candidate) => toFriendProfile(candidate));
   }
 
   /** The comparison group for the leaderboard: every user this account has an ACCEPTED friendship with, in either direction. */

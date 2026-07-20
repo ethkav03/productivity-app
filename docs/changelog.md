@@ -4,6 +4,41 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-20 — Admin dashboard
+
+Added a `/admin` dashboard for manually editing anything in the app: users (profile fields,
+toggle admin access, delete), XP/levels (character and per-attribute, independently), friendships
+(create/accept/delete for any pair of users, not just the caller's own), and achievements
+(force-grant/revoke, bypassing the condition engine). Gated by a new `User.isAdmin` field
+(migration `20260720120000_admin_users`) checked fresh from the database on every request
+(`AdminGuard`), not from a JWT claim, so revoking access takes effect immediately. New backend
+module `admin/`; new frontend route `app/admin/` (own minimal layout, not `AppShell`), reachable
+via a conditional link in the Topbar account menu.
+
+XP/level edits reuse the existing `XPTransaction` ledger rather than writing `totalXP`/`level`
+directly: added `XpService.applyCorrection`, the first real use of the `CORRECTION` source type
+and the only path where the ledger's `amount` can be negative (per the field's own doc comment,
+previously unimplemented). A correction never cascades - it touches exactly the character or
+exactly one named attribute, never both and never any skills - and still runs
+`AchievementsService.checkAndUnlock` afterward, so admin-granted levels can unlock real
+achievements the same as organic play.
+
+Used the new admin API to seed 5 persistent test accounts with deliberately varied attribute
+profiles and a mixed friend graph (accepted / pending / unconnected) for manual UI testing -
+`physical_pete`, `brainy_bea`, `disciplined_drew`, `social_sam`, `wealthy_wren`
+(password `TestPass123!` for all). Not part of the codebase or a migration - just data in the dev
+database, mentioned here for context, not tracked as a "feature."
+
+## 2026-07-20 — Suggested Friends
+
+Added a "Suggested Friends" section to the leaderboard's Manage Friends modal: `GET
+/friends/suggestions` (`FriendsService.getSuggestions`) returns other users with no existing
+`Friendship` row against the caller (any status, either direction), ranked by `totalXP` desc as a
+simple "notable characters" proxy. Each suggestion gets an inline "Add" button that sends a
+request directly (reuses the same mutation as the manual add-by-username form) and disappears
+from suggestions once requested, via the same `['friends']` query-key invalidation already used
+elsewhere in the modal.
+
 ## 2026-07-20 — Friends & Leaderboard
 
 Added a social layer: friend requests and a leaderboard ranking the caller against their accepted

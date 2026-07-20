@@ -15,6 +15,7 @@ export function toPublicUser(user: User) {
     currentStreak: user.currentStreak,
     longestStreak: user.longestStreak,
     createdAt: user.createdAt,
+    isAdmin: user.isAdmin,
   };
 }
 

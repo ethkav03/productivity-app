@@ -8,13 +8,14 @@ every model, enum, and constraint currently in that schema.
 
 ## Migration history
 
-Two migrations exist as of this writing:
+Four migrations exist as of this writing:
 
 | Migration folder | What it added |
 | --- | --- |
 | `20260719141428_init` | Initial schema: `User`, `Skill`, `Goal`, `GoalSkill`, `Quest`, `QuestSkill`, `Habit`, `HabitSkill`, `HabitCompletion`, `XPTransaction`, `Achievement`, `UserAchievement`, `Notification`, and all enums except the `ATTRIBUTE_LEVEL_REACHED` achievement requirement and `AttributeKey`. At this point `Skill` uniqueness was scoped to `[userId, name]` and `XPTransaction` had no `attributeId` column. |
 | `20260719201027_attribute_hierarchy` | Introduces the `Attribute` model and the `AttributeKey` enum; adds `Skill.attributeId` (required, FK to `Attribute`) and re-scopes skill name uniqueness to `[userId, attributeId, name]`; adds `XPTransaction.attributeId` (optional, FK to `Attribute`) so XP grants can mirror into the owning attribute; adds `Achievement.attributeKey` and the `ATTRIBUTE_LEVEL_REACHED` value to `AchievementRequirementType` so achievements can target attribute-level milestones. |
 | `20260720104302_friendships` | Introduces the `Friendship` model and the `FriendshipStatus` enum (`PENDING`, `ACCEPTED`), plus `User.sentFriendRequests`/`receivedFriendRequests` relations. Backs the friends/leaderboard feature - see the `Friendship` model reference below. |
+| `20260720120000_admin_users` | Adds `User.isAdmin` (`Boolean @default(false)`). Backs the admin dashboard - see `docs/backend.md` § `AdminModule`. |
 
 `migration_lock.toml` pins the schema to the `postgresql` provider (Prisma refuses to mix
 providers across migrations once this file exists).
@@ -67,6 +68,7 @@ Represents an account/character: identity, auth state, and the top-level charact
 | `passwordHash` | `String` | required | |
 | `avatar` | `String?` | nullable | |
 | `hashedRefreshToken` | `String?` | nullable | Stores the hashed current refresh token for rotation/invalidation. |
+| `isAdmin` | `Boolean` | `@default(false)` | Gates every `/admin` API route (`AdminGuard`) and the `/admin` frontend route. No self-service signup path - set directly in the database or by another admin via the admin dashboard. |
 | `level` | `Int` | `@default(1)` | Character level. |
 | `totalXP` | `Int` | `@default(0)` | Character-level cumulative XP. |
 | `currentStreak` | `Int` | `@default(0)` | Current daily-activity streak. |

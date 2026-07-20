@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { FriendsService } from './friends.service';
 import { CreateFriendRequestDto } from './dto/create-friend-request.dto';
@@ -20,6 +20,12 @@ export class FriendsController {
   @Get('requests')
   listRequests(@CurrentUser() user: AuthenticatedUser) {
     return this.friendsService.listRequests(user.userId);
+  }
+
+  @Get('suggestions')
+  getSuggestions(@CurrentUser() user: AuthenticatedUser, @Query('limit') limitParam?: string) {
+    const limit = Math.min(20, Math.max(1, parseInt(limitParam ?? '6', 10) || 6));
+    return this.friendsService.getSuggestions(user.userId, limit);
   }
 
   @Post('requests')

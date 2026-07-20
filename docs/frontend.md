@@ -12,7 +12,7 @@ for exact prop shapes, read the referenced files directly.
 
 ## Routing structure
 
-`frontend/app` contains three routing segments plus a root page:
+`frontend/app` contains four routing segments plus a root page:
 
 - **`app/(auth)/`** - a Next.js *route group* (the parenthesized name doesn't appear in the URL)
   for unauthenticated pages: `/login` and `/register`. Its `layout.tsx` renders a minimal
@@ -28,6 +28,12 @@ for exact prop shapes, read the referenced files directly.
   `/onboarding`. It has its own `layout.tsx` that applies the identical auth gate as `(app)` but
   renders only a bare `min-h-screen bg-background` wrapper - **no** `AppShell`, no sidebar/topbar.
   It is protected like the main app but visually stands alone, appropriate for a first-run wizard.
+- **`app/admin/`** - a real (non-grouped) route segment (`/admin`), gated like `onboarding` but
+  with an *additional* check: `layout.tsx` redirects to `/dashboard` (not `/login`) if the
+  authenticated user's `isAdmin` is falsy. Renders its own minimal header (title + "Back to app" +
+  theme toggle) rather than `AppShell` - it's a separate tool, not a page within the main nav.
+  Reachable only via a conditional "Admin Dashboard" link in the `Topbar` account menu, shown only
+  when `user.isAdmin` (see `Topbar` below) - there's no entry in `NAV_ITEMS`.
 - **`app/page.tsx`** - the root `/` route, not inside any group. It renders nothing but a
   `PageSpinner` and, once `useAuth()` finishes loading, replaces the URL with `/dashboard` (if
   `isAuthenticated`) or `/login` (otherwise). This is the single place in the app that redirects a
@@ -52,6 +58,7 @@ for exact prop shapes, read the referenced files directly.
 | `/leaderboard` | `frontend/app/(app)/leaderboard/page.tsx` | Ranks the caller against their accepted friends: metric tabs (Overall Level / Attribute / XP Earned, the latter two with a sub-select), a top-3 podium (graceful with fewer than 3 entries), a 4th-onward ranked list, and a "Manage Friends" modal (send/accept/decline/remove) with an unread-incoming-request badge. |
 | `/analytics` | `frontend/app/(app)/analytics/page.tsx` | Overview stat tiles, attribute progression grid, XP-over-time area chart, skill-level bar chart, activity heatmap, recent activity feed. |
 | `/settings` | `frontend/app/(app)/settings/page.tsx` | Edit profile (username, avatar URL), theme toggle, account info (email, member since), log out. |
+| `/admin` | `frontend/app/admin/page.tsx` | Admin-only (see routing structure above). Users tab: searchable table, click a row for a detail modal (edit profile/toggle admin/delete, per-attribute + character XP adjuster, achievement grant/revoke). Friendships tab: table of every `Friendship` in the system with accept/delete, plus a create-by-username form. |
 
 ## Auth flow
 
@@ -334,8 +341,9 @@ Renders `null` entirely if there is no authenticated `user`. Otherwise:
   full-screen fixed overlay) listing all notifications with title/message/relative timestamp, a
   "Mark all read" action (`markAllNotificationsRead`), and per-notification click-to-mark-read
   (`markNotificationRead`) - both invalidate the `['notifications']` query on success.
-- **Account menu**: a user-icon button opening a dropdown showing the username and a "Log out"
-  action that calls `useAuth().logout()`.
+- **Account menu**: a user-icon button opening a dropdown showing the username, a conditional
+  "Admin Dashboard" link to `/admin` (rendered only when `user.isAdmin`), and a "Log out" action
+  that calls `useAuth().logout()`.
 
 ## Keeping this file in sync
 

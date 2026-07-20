@@ -35,3 +35,18 @@ export interface XpAwardResult {
    */
   attributes: AttributeXpResult[];
 }
+
+export interface ApplyCorrectionParams {
+  userId: string;
+  /** Can be positive or negative, but not zero. */
+  amount: number;
+  note?: string;
+  /** If set, the correction targets this attribute directly instead of the character. */
+  attributeId?: string;
+}
+
+export interface CorrectionResult extends LevelChangeResult {
+  scope: 'CHARACTER' | 'ATTRIBUTE';
+  attributeId?: string;
+  totalXP: number;
+}
