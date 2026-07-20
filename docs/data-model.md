@@ -8,7 +8,7 @@ every model, enum, and constraint currently in that schema.
 
 ## Migration history
 
-Four migrations exist as of this writing:
+Six migrations exist as of this writing:
 
 | Migration folder | What it added |
 | --- | --- |
@@ -16,6 +16,8 @@ Four migrations exist as of this writing:
 | `20260719201027_attribute_hierarchy` | Introduces the `Attribute` model and the `AttributeKey` enum; adds `Skill.attributeId` (required, FK to `Attribute`) and re-scopes skill name uniqueness to `[userId, attributeId, name]`; adds `XPTransaction.attributeId` (optional, FK to `Attribute`) so XP grants can mirror into the owning attribute; adds `Achievement.attributeKey` and the `ATTRIBUTE_LEVEL_REACHED` value to `AchievementRequirementType` so achievements can target attribute-level milestones. |
 | `20260720104302_friendships` | Introduces the `Friendship` model and the `FriendshipStatus` enum (`PENDING`, `ACCEPTED`), plus `User.sentFriendRequests`/`receivedFriendRequests` relations. Backs the friends/leaderboard feature - see the `Friendship` model reference below. |
 | `20260720120000_admin_users` | Adds `User.isAdmin` (`Boolean @default(false)`). Backs the admin dashboard - see `docs/backend.md` § `AdminModule`. |
+| `20260720140000_xp_source_name` | Adds `XPTransaction.sourceName` (nullable) - the source entity's display name, captured at write time. Existing rows were backfilled from the current quest/habit/goal title where resolvable (best-effort; rows whose source has since been deleted stay `null`). |
+| `20260720145000_xp_event_id` | Adds `XPTransaction.eventId` (nullable) - correlates every row written by one `XpService.awardXp`/`applyCorrection` call. Not backfilled for pre-existing rows (see the field's own doc comment for why `createdAt` isn't a safe substitute). |
 
 `migration_lock.toml` pins the schema to the `postgresql` provider (Prisma refuses to mix
 providers across migrations once this file exists).
@@ -333,6 +335,8 @@ rather than directly incrementing a counter on `User`/`Skill`/`Attribute`.
 | `amount` | `Int` | required | XP amount (can be negative for `CORRECTION`). |
 | `sourceType` | `XPSourceType` | required | See enum reference. |
 | `sourceId` | `String?` | nullable | ID of the originating record (quest/habit/goal/achievement), untyped FK (no relation enforced at the DB level). |
+| `sourceName` | `String?` | nullable | The source's display name (e.g. a quest's title), captured at write time - not resolved later by joining on `sourceId`, so a row's label survives the source being renamed or deleted. |
+| `eventId` | `String?` | nullable | Correlates every row written by one `XpService.awardXp`/`applyCorrection` call. Nullable because rows written before this column existed have nothing to backfill it with. |
 | `note` | `String?` | nullable | Free-text annotation, notably for `CORRECTION` entries. |
 | `createdAt` | `DateTime` | `@default(now())` | |
 
@@ -347,9 +351,17 @@ skill XP, and attribute XP are each independently reconstructable from the ledge
 query that isolates "character-level XP" can filter on `skillId: null AND attributeId: null`
 without ambiguity.
 
+**Why `eventId` exists, and why it isn't `createdAt`:** grouping a cascade's rows back into
+"one event" for a UI (`AnalyticsService.xpHistory`) needs a shared key. `createdAt` looks like
+an obvious candidate - all of a cascade's rows are written inside one `$transaction` - but
+Prisma evaluates a `@default(now())` value per statement (client-side), not once per
+transaction, so sibling rows routinely differ by a few milliseconds. `eventId` is a UUID
+generated once per `awardXp`/`applyCorrection` call and stamped on every row it writes, which is
+exact regardless of timing.
+
 **Constraints:** `@@index([userId])`, `@@index([skillId])`, `@@index([attributeId])`,
 `@@index([userId, createdAt])` (supports chronological/paginated ledger queries per user, e.g.
-analytics and activity feeds). Maps to table `xp_transactions`.
+analytics and activity feeds), `@@index([eventId])`. Maps to table `xp_transactions`.
 
 ---
 

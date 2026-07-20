@@ -155,6 +155,7 @@ export class HabitsService {
       amount: habit.xpReward,
       sourceType: 'HABIT_COMPLETION',
       sourceId: habit.id,
+      sourceName: habit.title,
       skillIds: habit.habitSkills.map((hs) => hs.skillId),
     });
   }

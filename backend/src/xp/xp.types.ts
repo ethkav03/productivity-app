@@ -5,6 +5,8 @@ export interface AwardXpParams {
   amount: number;
   sourceType: XPSourceType;
   sourceId?: string;
+  /** The source entity's display name (e.g. a quest's title), captured now so it survives the source being renamed/deleted later. */
+  sourceName?: string;
   /** Skills that should receive the same XP amount as the character (e.g. a quest's associated skills). */
   skillIds?: string[];
   note?: string;
@@ -41,6 +43,7 @@ export interface ApplyCorrectionParams {
   /** Can be positive or negative, but not zero. */
   amount: number;
   note?: string;
+  sourceName?: string;
   /** If set, the correction targets this attribute directly instead of the character. */
   attributeId?: string;
 }

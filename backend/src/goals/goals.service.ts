@@ -184,6 +184,7 @@ export class GoalsService {
         amount: goal.xpReward,
         sourceType: 'GOAL_COMPLETION',
         sourceId: goal.id,
+        sourceName: goal.title,
         skillIds: goal.goalSkills.map((goalSkill) => goalSkill.skillId),
       });
       return { goal: await this.serialize(updated), completion };

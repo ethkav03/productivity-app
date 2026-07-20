@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   Area,
@@ -20,6 +21,7 @@ import {
   Compass,
   Dumbbell,
   Flame,
+  History,
   Inbox,
   LineChart,
   LucideIcon,
@@ -423,6 +425,10 @@ function RecentActivitySection() {
     <Card>
       <CardHeader>
         <CardTitle>Recent Activity</CardTitle>
+        <Link href="/analytics/history" className="flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+          <History className="h-3.5 w-3.5" />
+          Full history
+        </Link>
       </CardHeader>
 
       {isLoading && <ChartLoading height={160} />}

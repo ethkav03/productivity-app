@@ -5,6 +5,8 @@ export interface CompleteActivityParams {
   amount: number;
   sourceType: XPSourceType;
   sourceId?: string;
+  /** The activity's display name (e.g. a quest's title), captured now so it survives the activity being renamed/deleted later. */
+  sourceName?: string;
   skillIds?: string[];
   note?: string;
   /** Whether this activity counts toward the character's daily activity streak. Defaults to true. */

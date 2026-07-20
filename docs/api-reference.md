@@ -948,7 +948,40 @@ Array<{
   sourceId: string | null;
   note: string | null;
   createdAt: string;
-  sourceTitle: string | null; // resolved title of the linked quest/habit/goal, or null
+  sourceTitle: string | null; // the stored sourceName (see data-model.md), or null
+}>
+```
+
+### `GET /analytics/xp-history`
+
+A dedicated, groupable XP history: every row written by a single completion/correction is
+reconstructed as one event, with a line per level of the cascade it touched (character, each
+tagged skill, each of those skills' attributes). See `data-model.md` § `XPTransaction.eventId`
+for how the grouping actually works, and `gameplay-systems.md` § "The centralised XP ledger" for
+why `createdAt` isn't used for it.
+
+Query params:
+
+| Param        | Type   | Notes                                                                 |
+| ------------ | ------ | ---------------------------------------------------------------------- |
+| `sourceType` | string | Optional. One of `QUEST_COMPLETION` \| `HABIT_COMPLETION` \| `GOAL_COMPLETION` \| `ACHIEVEMENT_BONUS` \| `CORRECTION`. Invalid/omitted values are ignored (no filter). |
+| `limit`      | number | Optional, default `20`. Clamped to `[1, 100]`.                         |
+| `before`     | string | Optional ISO timestamp cursor - returns events strictly older than this, for "load more" pagination. Pass the last returned event's `createdAt`. |
+
+Response: `200 OK`, newest first:
+
+```ts
+Array<{
+  createdAt: string;
+  sourceType: 'QUEST_COMPLETION' | 'HABIT_COMPLETION' | 'GOAL_COMPLETION' | 'ACHIEVEMENT_BONUS' | 'CORRECTION';
+  sourceId: string | null;
+  sourceName: string | null;
+  note: string | null;
+  lines: Array<{
+    scope: 'CHARACTER' | 'SKILL' | 'ATTRIBUTE';
+    label: string; // 'Character', or the skill/attribute's name
+    amount: number;
+  }>;
 }>
 ```
 

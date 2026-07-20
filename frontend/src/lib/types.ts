@@ -229,8 +229,26 @@ export interface XPTransaction {
   note: string | null;
   createdAt: string;
   skill?: { id: string; name: string } | null;
-  /** Best-effort human-readable title of the source quest/habit/goal, resolved server-side for feed display. */
+  /** The source's display name, captured at write time (e.g. a quest's title) - survives the source being renamed/deleted later. */
   sourceTitle?: string | null;
+}
+
+export type XpHistoryLineScope = 'CHARACTER' | 'SKILL' | 'ATTRIBUTE';
+
+export interface XpHistoryLine {
+  scope: XpHistoryLineScope;
+  label: string;
+  amount: number;
+}
+
+/** GET /analytics/xp-history - one grouped completion/correction event, with a line per level of the cascade it touched. */
+export interface XpHistoryEvent {
+  createdAt: string;
+  sourceType: XPSourceType;
+  sourceId: string | null;
+  sourceName: string | null;
+  note: string | null;
+  lines: XpHistoryLine[];
 }
 
 export interface CompletionResult {

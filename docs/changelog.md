@@ -4,6 +4,42 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-20 — XP source metadata, ledger tests, and XP History
+
+First slice of the feature roadmap's "Sprint 1: Progression Foundation"
+(`docs/feature-roadmap.md`) - Features 0.2 and 5, plus the roadmap's own "ledger invariant
+tests" ask pulled forward ahead of the two riskier, more invasive Sprint 1 items (XP Bundles,
+an internal domain-event system) so they land protected by real tests. Those two remain pending.
+
+Added `XPTransaction.sourceName` (migration `20260720140000_xp_source_name`) - the activity's
+display name, captured at write time in `XpService.awardXp`/`applyCorrection` rather than
+resolved later by joining on `sourceId`, so a ledger row's label survives its source being
+renamed or deleted. Existing rows were backfilled best-effort from current quest/habit/goal
+titles (77 of 77 resolved). `AnalyticsService.feed` no longer does a live 3-table join for this -
+it just reads the stored value.
+
+While building a groupable "XP History" view, discovered that grouping by `createdAt` (the
+initial plan, reasoning that all of one `awardXp` call's rows share one `$transaction`) was
+unsound: Prisma evaluates `@default(now())` per statement, not once per transaction, so sibling
+rows can land a few milliseconds apart. Added `XPTransaction.eventId`
+(migration `20260720145000_xp_event_id`) - a UUID generated once per `awardXp`/`applyCorrection`
+call and stamped on every row it writes - as the real correlation key. Not backfilled (nothing
+to derive it from for old rows); `AnalyticsService.xpHistory` treats a null-`eventId` row as its
+own singleton group rather than guessing via time proximity.
+
+Added the backend's first test suite: `common/leveling.spec.ts` and `xp/xp.service.spec.ts`
+(`jest`/`ts-jest`/`@nestjs/testing` were installed from the first commit but unused until now),
+unit-testing the leveling formula and, against a mocked `PrismaService`, the ledger's shape
+invariants directly - a character row never carries `skillId`/`attributeId`, every associated
+skill gets the full award amount, a call's rows all share one `eventId` while two calls never
+collide, and `applyCorrection` clamps negative totals to `0`. Scoped deliberately to the ledger,
+not a general coverage push.
+
+New `GET /analytics/xp-history` endpoint and `/analytics/history` page: every XP event
+(character + skill + attribute lines together), filterable by source category, grouped by
+calendar day, with cursor-based "Load more" via `useInfiniteQuery`. Linked from the Analytics
+page's existing "Recent Activity" card.
+
 ## 2026-07-20 — Leaderboard attribute filter: dropdown → icon radio group
 
 Replaced the `<Select>` dropdown for the leaderboard's Attribute mode with a `role="radiogroup"`

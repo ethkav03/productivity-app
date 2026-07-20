@@ -25,6 +25,7 @@ it.
 | [`design-system.md`](./design-system.md) | Color tokens (light/dark), the attribute color palette, theming mechanism, shared UI component reference. |
 | [`mvp-spec.md`](./mvp-spec.md) | The original MVP product specification this project was built from. |
 | [`attribute-hierarchy-spec.md`](./attribute-hierarchy-spec.md) | The follow-up specification that introduced the 8-attribute hierarchy, plus notes on where the implementation deliberately diverges from it. |
+| [`feature-roadmap.md`](./feature-roadmap.md) | The third specification: a multi-sprint roadmap (domain events, XP bundles, quest gating, RPG identity, a self-improvement layer, an intelligence layer) plus an implementation-status table tracking progress against it. |
 | [`changelog.md`](./changelog.md) | Dated log of notable changes. |
 
 ## Reading order
@@ -32,4 +33,5 @@ it.
 New to the codebase? Read in this order: `architecture.md` → `mvp-spec.md` (product context) →
 `data-model.md` → `gameplay-systems.md` → `api-reference.md` → `backend.md` → `frontend.md` →
 `design-system.md`. Everything cross-links, so it's fine to jump around once you have the
-architecture overview.
+architecture overview. `feature-roadmap.md` is forward-looking - read it when picking up the next
+piece of in-progress work, not as part of the core-concepts pass above.

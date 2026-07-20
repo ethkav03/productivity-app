@@ -366,6 +366,18 @@ model XPTransaction {
   amount      Int
   sourceType  XPSourceType
   sourceId    String?
+  /// The source entity's display name (e.g. a quest's title), captured at write
+  /// time rather than resolved later by joining on sourceId - so a ledger row's
+  /// label survives the source quest/habit/goal being renamed or deleted.
+  sourceName  String?
+  /// Correlates every row written by a single XpService.awardXp/applyCorrection
+  /// call (the character row plus each skill/attribute mirror row it cascaded
+  /// into), so AnalyticsService.xpHistory can group them back into one event.
+  /// Deliberately NOT createdAt: Prisma's @default(now()) is evaluated
+  /// per-statement (client-side), not per-transaction, so sibling rows from one
+  /// call can differ by a few milliseconds - not a safe grouping key. Nullable
+  /// because rows written before this column existed have no value to backfill.
+  eventId     String?
   note        String?
   createdAt   DateTime     @default(now())
 
@@ -377,6 +389,7 @@ model XPTransaction {
   @@index([skillId])
   @@index([attributeId])
   @@index([userId, createdAt])
+  @@index([eventId])
   @@map("xp_transactions")
 }
 

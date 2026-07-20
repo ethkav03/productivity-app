@@ -189,6 +189,41 @@ inflated by a multiple equal to however many skills (and shared attributes) were
 completed activity. **Any new code querying `XPTransaction` to count or sum "events" rather than
 "XP flowed to a specific skill/attribute" must respect this same filter.**
 
+### `sourceName` and `eventId`
+
+Two more fields ride along on every row `awardXp` writes:
+
+- **`sourceName`** - the activity's display name (a quest/habit/goal's `title`), passed in by the
+  caller and stamped onto every row from the call. Captured at write time rather than resolved
+  later by joining on `sourceId`, so a ledger row's label survives its source being renamed or
+  deleted - `AnalyticsService.feed`/`xpHistory` read this directly instead of doing a live join.
+- **`eventId`** - a UUID (`crypto.randomUUID()`) generated once per `awardXp` call and stamped on
+  every row it writes, so a UI can reconstruct "one event" (the character row plus every
+  skill/attribute row it cascaded into). This is **not** `createdAt`: even though every row from
+  one call is written inside the same `$transaction`, Prisma evaluates a `@default(now())` value
+  per statement (client-side), not once per transaction - sibling rows routinely land a few
+  milliseconds apart. Grouping by `eventId` is exact regardless of timing; grouping by `createdAt`
+  was tried first and was not (see `AnalyticsService.xpHistory`'s own history for the bug this
+  caused). Both fields are nullable, since rows written before they existed have nothing to
+  backfill `eventId` with (`sourceName` was backfilled best-effort from current entity titles).
+
+### Corrections: the one path outside the cascade
+
+`XpService.applyCorrection` is a second, deliberately narrower entry point into the same ledger,
+used by the admin dashboard's XP/level editor (`docs/backend.md` § `AdminModule`). Unlike
+`awardXp`:
+
+- Its `amount` **may be negative** - the only place in the codebase this is allowed, matching the
+  `XPTransaction.amount` field's own doc comment ("can be negative for CORRECTION").
+- It never cascades: a correction targets *exactly* the character or *exactly* one named
+  attribute (via an optional `attributeId`), never both and never any skills, since it isn't tied
+  to completing anything - there is no "associated skill" to cascade through.
+- The resulting total is clamped to a minimum of `0` (`Math.max(0, ...)`) rather than allowed to
+  go negative, since a stored negative `totalXP` has no meaningful level.
+- It still writes `sourceType: 'CORRECTION'`, its own fresh `eventId`, and a `note` (defaulted to
+  `"Admin correction"` if the caller omits one) - so corrections show up in `xpHistory` like any
+  other event, just as a single-line one.
+
 ## 4. Leveling formula
 
 Defined once in `backend/src/common/leveling.ts` and shared by the character, every skill, and

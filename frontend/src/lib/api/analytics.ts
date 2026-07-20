@@ -5,6 +5,8 @@ import {
   AnalyticsOverview,
   AnalyticsSkillProgress,
   AnalyticsXpPoint,
+  XPSourceType,
+  XpHistoryEvent,
   XPTransaction,
 } from '../types';
 
@@ -35,5 +37,17 @@ export async function getAnalyticsActivity(days = 84) {
 
 export async function getAnalyticsFeed(limit = 15) {
   const { data } = await apiClient.get<XPTransaction[]>('/analytics/feed', { params: { limit } });
+  return data;
+}
+
+export interface XpHistoryParams {
+  sourceType?: XPSourceType;
+  limit?: number;
+  /** ISO timestamp cursor - returns events strictly older than this, for "load more" pagination. */
+  before?: string;
+}
+
+export async function getXpHistory(params: XpHistoryParams = {}) {
+  const { data } = await apiClient.get<XpHistoryEvent[]>('/analytics/xp-history', { params });
   return data;
 }

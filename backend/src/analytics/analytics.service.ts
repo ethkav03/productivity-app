@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { XPSourceType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { calculateLevelState } from '../common/leveling';
 import { getDayKey } from '../common/period';
@@ -172,34 +173,82 @@ export class AnalyticsService {
       take: limit,
     });
 
-    const questIds = [...new Set(rows.filter((r) => r.sourceType === 'QUEST_COMPLETION' && r.sourceId).map((r) => r.sourceId as string))];
-    const habitIds = [...new Set(rows.filter((r) => r.sourceType === 'HABIT_COMPLETION' && r.sourceId).map((r) => r.sourceId as string))];
-    const goalIds = [...new Set(rows.filter((r) => r.sourceType === 'GOAL_COMPLETION' && r.sourceId).map((r) => r.sourceId as string))];
+    // sourceName is captured at write time (XpService.awardXp), so this no
+    // longer needs a live join against quest/habit/goal tables - a row's
+    // label survives its source being renamed or deleted later. Exposed as
+    // `sourceTitle` for API/frontend backward compatibility.
+    return rows.map((row) => ({ ...row, sourceTitle: row.sourceName ?? null }));
+  }
 
-    const [quests, habits, goals] = await Promise.all([
-      questIds.length
-        ? this.prisma.quest.findMany({ where: { id: { in: questIds } }, select: { id: true, title: true } })
-        : Promise.resolve([]),
-      habitIds.length
-        ? this.prisma.habit.findMany({ where: { id: { in: habitIds } }, select: { id: true, title: true } })
-        : Promise.resolve([]),
-      goalIds.length
-        ? this.prisma.goal.findMany({ where: { id: { in: goalIds } }, select: { id: true, title: true } })
-        : Promise.resolve([]),
-    ]);
+  /**
+   * A dedicated, groupable XP history: every `XPTransaction` row written by
+   * one `XpService.awardXp`/`applyCorrection` call carries the same
+   * `eventId` (generated once per call), so they can be reconstructed as
+   * "one event" - the character row plus every skill/attribute mirror row it
+   * cascaded into. `createdAt` is NOT a safe grouping key on its own -
+   * Prisma evaluates `@default(now())` per statement, so sibling rows from
+   * one call can differ by a few milliseconds.
+   *
+   * Rows written before `eventId` existed are nullable and treated as their
+   * own singleton group (keyed by their own row id) rather than guessed at
+   * via a time-proximity heuristic.
+   *
+   * Grouping happens in application code rather than via a DB-level
+   * `distinct`, because `distinct` collapses ALL null-`eventId` rows into a
+   * single row (SQL treats NULL = NULL as equal for grouping), which would
+   * make pre-migration history disappear. This means the raw fetch takes a
+   * multiple of `limit` as a buffer to account for grouping reducing the row
+   * count - generous for the common case (a handful of tagged skills per
+   * activity), but an event with an unusually large number of tagged skills
+   * could in theory still push a page below the requested `limit`.
+   */
+  async xpHistory(userId: string, sourceType: XPSourceType | undefined, limit: number, before?: Date) {
+    const rawTake = Math.min(300, Math.max(limit * 10, 50));
 
-    const questTitleById = new Map(quests.map((q) => [q.id, q.title]));
-    const habitTitleById = new Map(habits.map((h) => [h.id, h.title]));
-    const goalTitleById = new Map(goals.map((g) => [g.id, g.title]));
+    const rows = await this.prisma.xPTransaction.findMany({
+      where: {
+        userId,
+        ...(sourceType ? { sourceType } : {}),
+        ...(before ? { createdAt: { lt: before } } : {}),
+      },
+      include: {
+        skill: { select: { name: true } },
+        attribute: { select: { name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: rawTake,
+    });
 
-    return rows.map((row) => {
-      let sourceTitle: string | null = null;
-      if (row.sourceId) {
-        if (row.sourceType === 'QUEST_COMPLETION') sourceTitle = questTitleById.get(row.sourceId) ?? null;
-        else if (row.sourceType === 'HABIT_COMPLETION') sourceTitle = habitTitleById.get(row.sourceId) ?? null;
-        else if (row.sourceType === 'GOAL_COMPLETION') sourceTitle = goalTitleById.get(row.sourceId) ?? null;
+    const groups = new Map<string, typeof rows>();
+    const groupOrder: string[] = [];
+    for (const row of rows) {
+      const key = row.eventId ?? row.id;
+      const existing = groups.get(key);
+      if (existing) {
+        existing.push(row);
+      } else {
+        groups.set(key, [row]);
+        groupOrder.push(key);
       }
-      return { ...row, sourceTitle };
+    }
+
+    return groupOrder.slice(0, limit).map((key) => {
+      const group = groups.get(key) as typeof rows;
+      const anchor = group.find((row) => !row.skillId && !row.attributeId) ?? group[0];
+      const latestCreatedAt = group.reduce((max, row) => (row.createdAt > max ? row.createdAt : max), group[0].createdAt);
+
+      return {
+        createdAt: latestCreatedAt,
+        sourceType: anchor.sourceType,
+        sourceId: anchor.sourceId,
+        sourceName: anchor.sourceName,
+        note: anchor.note,
+        lines: group.map((row) => ({
+          scope: row.skillId ? ('SKILL' as const) : row.attributeId ? ('ATTRIBUTE' as const) : ('CHARACTER' as const),
+          label: row.skill?.name ?? row.attribute?.name ?? 'Character',
+          amount: row.amount,
+        })),
+      };
     });
   }
 }

@@ -283,10 +283,14 @@ The centralized XP ledger. No controller — it is a pure backend service consum
 - **Imports:** none.
 - **Exports:** `XpService`.
   - `awardXp(params)` — the single place that ever writes to `totalXP`/`level` on `User`,
-    `Skill`, or `Attribute`. Inside one `$transaction`: creates an immutable `XPTransaction` row
-    for the character (skillId/attributeId both null), then one for each associated skill and
-    that skill's attribute, recomputing level state (`calculateLevelState`) for the character,
-    each skill, and each attribute in turn. Throws `BadRequestException` if `amount <= 0`.
+    `Skill`, or `Attribute`. Generates one `eventId` (`crypto.randomUUID()`) per call and stamps
+    it on every row the call writes. Inside one `$transaction`: creates an immutable
+    `XPTransaction` row for the character (skillId/attributeId both null), then one for each
+    associated skill and that skill's attribute, recomputing level state
+    (`calculateLevelState`) for the character, each skill, and each attribute in turn. Also
+    accepts an optional `sourceName` (the caller's activity title, e.g. a quest's title),
+    written onto every row from the call so its label survives the source being renamed or
+    deleted later. Throws `BadRequestException` if `amount <= 0`.
   - `getRecentActivity(userId, limit = 20)` — most recent `XPTransaction` rows for a user,
     including a minimal `skill` relation.
   - `applyCorrection(params)` — a direct, out-of-band ledger correction: the only place `amount`
@@ -452,9 +456,11 @@ Read-only aggregation over the XP ledger and related resources — no writes, no
 - **Imports:** none.
 - **Controller:** `AnalyticsController` — `GET /api/analytics/overview`,
   `GET /api/analytics/xp?days=`, `GET /api/analytics/skills`, `GET /api/analytics/attributes`,
-  `GET /api/analytics/activity?days=`, `GET /api/analytics/feed?limit=` — all guarded. The
-  controller clamps `days` to `[1, 365]` (defaults 30 for `/xp`, 84 for `/activity`) and `limit`
-  to `[1, 100]` (default 15 for `/feed`).
+  `GET /api/analytics/activity?days=`, `GET /api/analytics/feed?limit=`,
+  `GET /api/analytics/xp-history?sourceType=&limit=&before=` — all guarded. The controller
+  clamps `days` to `[1, 365]` (defaults 30 for `/xp`, 84 for `/activity`), `limit` to `[1, 100]`
+  (default 15 for `/feed`, 20 for `/xp-history`), and validates `sourceType` against the
+  `XPSourceType` enum (an invalid/missing value just means "no filter").
 - **Providers:** `AnalyticsService` (not exported — no other module depends on it).
   - `overview(userId)` — character level state, `xpThisWeek`, `activitiesCompleted` (count of
     character-level completion transactions), current/longest streak, `mostImprovedSkill`
@@ -466,7 +472,16 @@ Read-only aggregation over the XP ledger and related resources — no writes, no
   - `activityHeatmap(userId, days)` — daily count of character-level completion transactions
     for the trailing `days` (zero-filled), for a GitHub-style heatmap.
   - `feed(userId, limit)` — most recent character-level `XPTransaction` rows, each annotated
-    with `sourceTitle` (the quest/habit/goal title resolved from `sourceId`/`sourceType`).
+    with `sourceTitle` (now just the stored `sourceName`, no live join - see below).
+  - `xpHistory(userId, sourceType?, limit, before?)` — groups ledger rows by `eventId` (falling
+    back to a row's own `id` as a singleton group for pre-`eventId` rows) into one entry per
+    completion/correction event, each with a `lines[]` breakdown across whichever of
+    character/skill/attribute it touched. Groups in application code rather than a DB-level
+    `distinct` - see the method's own doc comment for why (a `distinct` on a nullable column
+    would collapse every legacy null-`eventId` row into a single result). Fetches
+    `min(300, max(limit * 10, 50))` raw rows as a buffer before grouping, since grouping reduces
+    the row count - generous for the common case, but a page could fall short of `limit` for a
+    user with unusually large multi-skill events.
 - **Depended on by:** nothing (only `AppModule`).
 
 ### `FriendsModule` (`backend/src/friends/`)
@@ -621,7 +636,32 @@ directly wherever needed rather than injected.
   response. This is what makes every error response across the API consistent in shape,
   regardless of which service threw.
 
-## 5. Maintenance note
+## 5. Testing
+
+`jest`/`ts-jest`/`@nestjs/testing` were installed from the project's first commit but unused
+until the ledger invariant tests below - `npm test` (backend) runs the suite, configured via a
+`"jest"` block in `package.json` (`rootDir: "src"`, `testRegex: ".*\\.spec\\.ts$"`).
+
+- `common/leveling.spec.ts` — pure unit tests for `xpRequiredForLevel`/`calculateLevelState`:
+  level-boundary edge cases, the negative-XP floor, and that level state is always recomputed
+  from cumulative XP rather than trusted from a stored counter.
+- `xp/xp.service.spec.ts` — unit tests for `XpService.awardXp`/`applyCorrection` against a
+  mocked `PrismaService` (a fake `tx` object with jest-mocked model methods, since these tests
+  assert on *which rows get created and with what shape*, not on real database behavior). Encodes
+  the ledger's two most important invariants in code rather than only in comments:
+  - a character-level row never has `skillId` or `attributeId` set;
+  - a skill row and its attribute-mirror row are never the same row (one row per level of the
+    cascade), and every associated skill gets the *full* award amount, not a divided share;
+  - all rows from one `awardXp`/`applyCorrection` call share the same generated `eventId`, and
+    two separate calls never collide;
+  - `applyCorrection` clamps a resulting negative total to `0`, accepts negative amounts (the
+    only path where that's allowed), and rejects a zero amount.
+
+Nothing else in the backend has test coverage yet - this is deliberately scoped to the ledger,
+the highest-risk, most-reused code path in the app (see `docs/gameplay-systems.md`'s invariant
+callout), not a general push for coverage.
+
+## 6. Maintenance note
 
 This file documents backend **structure and responsibilities** — the module graph, what each
 service exports, and who depends on what. It deliberately does not reproduce the XP/leveling

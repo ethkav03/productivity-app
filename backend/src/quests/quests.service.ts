@@ -171,6 +171,7 @@ export class QuestsService {
       amount: quest.xpReward,
       sourceType: 'QUEST_COMPLETION',
       sourceId: quest.id,
+      sourceName: quest.title,
       skillIds: quest.questSkills.map((qs) => qs.skillId),
     });
   }

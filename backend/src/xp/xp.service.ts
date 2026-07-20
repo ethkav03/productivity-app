@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { calculateLevelState } from '../common/leveling';
@@ -22,14 +23,15 @@ export class XpService {
   constructor(private readonly prisma: PrismaService) {}
 
   async awardXp(params: AwardXpParams): Promise<XpAwardResult> {
-    const { userId, amount, sourceType, sourceId, skillIds = [], note } = params;
+    const { userId, amount, sourceType, sourceId, sourceName, skillIds = [], note } = params;
     if (amount <= 0) {
       throw new BadRequestException('XP amount must be positive');
     }
+    const eventId = randomUUID();
 
     return this.prisma.$transaction(async (tx) => {
       await tx.xPTransaction.create({
-        data: { userId, amount, sourceType, sourceId, note },
+        data: { userId, amount, sourceType, sourceId, sourceName, eventId, note },
       });
 
       const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
@@ -54,7 +56,7 @@ export class XpService {
 
       for (const skillId of uniqueSkillIds) {
         await tx.xPTransaction.create({
-          data: { userId, skillId, amount, sourceType, sourceId, note },
+          data: { userId, skillId, amount, sourceType, sourceId, sourceName, eventId, note },
         });
 
         const skill = await tx.skill.findUniqueOrThrow({ where: { id: skillId } });
@@ -78,7 +80,7 @@ export class XpService {
         // Deliberately not deduplicated across skills sharing an attribute -
         // same rationale as skills each getting the full XP amount.
         await tx.xPTransaction.create({
-          data: { userId, attributeId: skill.attributeId, amount, sourceType, sourceId, note },
+          data: { userId, attributeId: skill.attributeId, amount, sourceType, sourceId, sourceName, eventId, note },
         });
 
         const attribute = await tx.attribute.findUniqueOrThrow({ where: { id: skill.attributeId } });
@@ -112,7 +114,7 @@ export class XpService {
    * dashboard to directly adjust a user's level.
    */
   async applyCorrection(params: ApplyCorrectionParams): Promise<CorrectionResult> {
-    const { userId, amount, note, attributeId } = params;
+    const { userId, amount, note, sourceName, attributeId } = params;
     if (amount === 0) {
       throw new BadRequestException('Correction amount must not be zero');
     }
@@ -123,6 +125,8 @@ export class XpService {
           userId,
           amount,
           sourceType: 'CORRECTION',
+          sourceName,
+          eventId: randomUUID(),
           note: note ?? 'Admin correction',
           attributeId: attributeId ?? null,
         },
