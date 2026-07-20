@@ -165,7 +165,7 @@ export class XpService {
         });
       }
 
-      return { xpGained: amount, character, skills, attributes };
+      return { xpGained: amount, character, skills, attributes, eventId };
     });
   }
 

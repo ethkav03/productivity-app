@@ -19,6 +19,35 @@ export function daysBetweenKeys(previousKey: string, currentKey: string): number
 }
 
 /**
+ * Monday-anchored week key (UTC), used by Weekly Challenges - returned as
+ * that Monday's own day key (e.g. a Wednesday returns the day key of the
+ * Monday two days earlier), so it stays comparable/sortable with plain day
+ * keys rather than needing separate ISO-week parsing.
+ */
+export function getWeekKey(date: Date = new Date()): string {
+  const utcDate = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const dayOfWeek = utcDate.getUTCDay(); // 0 (Sun) - 6 (Sat)
+  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  utcDate.setUTCDate(utcDate.getUTCDate() + diffToMonday);
+  return getDayKey(utcDate);
+}
+
+/** Midnight UTC at the start of the *next* calendar day - used as a Daily Challenge's `expiresAt`. */
+export function endOfDayUtc(date: Date = new Date()): Date {
+  const end = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  end.setUTCDate(end.getUTCDate() + 1);
+  return end;
+}
+
+/** Midnight UTC at the start of the Monday *after* this week - used as a Weekly Challenge's `expiresAt`. */
+export function endOfWeekUtc(date: Date = new Date()): Date {
+  const mondayKey = getWeekKey(date);
+  const end = new Date(`${mondayKey}T00:00:00.000Z`);
+  end.setUTCDate(end.getUTCDate() + 7);
+  return end;
+}
+
+/**
  * Given the day key of the last recorded activity and the day key of a new
  * activity, returns the streak that should result.
  */

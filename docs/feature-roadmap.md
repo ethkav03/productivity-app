@@ -361,9 +361,11 @@ Tracked here as work proceeds; see `docs/changelog.md` for the dated narrative o
 
 **Chosen entry point:** Sprint 1 (Progression Foundation) - the user chose this over the
 feature-first "Immediate MVP Expansion" path when asked, so foundation work landed before any
-Phase 1+ feature. Sprint 1 is complete; Sprint 2 (Quest Progression) is in progress, built one
-roadmap Feature per git branch (`feature/level-gated-quests`, `feature/quest-board`,
-`feature/daily-weekly-challenges`), each merged into `main` when done and verified.
+Phase 1+ feature. Sprint 1 and Sprint 2 (Quest Progression) are both complete, built one roadmap
+Feature per git branch (`feature/level-gated-quests`, `feature/quest-board`,
+`feature/daily-weekly-challenges`), each merged into `main` when done and verified. Sprint 3
+("Meaningful Progression": level-up rewards, titles, perks, unlockable quests, skill/attribute
+detail pages) is next.
 
 | Item | Status |
 | --- | --- |
@@ -374,7 +376,7 @@ roadmap Feature per git branch (`feature/level-gated-quests`, `feature/quest-boa
 | 0.1 — Internal domain events | **Done.** `ActivityCompletedEvent` + `EventEmitter2` (`@nestjs/event-emitter`), emitted once per `ProgressionService.completeActivity` call; one listener (`LevelUpNotificationListener`) so far. See `gameplay-systems.md` § "Internal domain events (Feature 0.1)". This was Sprint 1's last item - see `docs/changelog.md` for the closing entry. |
 | 1 — Level-Gated Quests | **Done** (`feature/level-gated-quests`). `QuestRequirement` (5 types) + computed `isLocked`/`requirements` on every serialized quest - locked quests are never hidden. Reward claiming (`QuestCompletion`, `POST /quests/:id/claim`) also landed as part of this branch. See `gameplay-systems.md` § "Level-gated quests and reward claiming (Feature 1)". |
 | 2 — Quest Board | **Done** (`feature/quest-board`). `Quest.category` (Daily/Weekly/Long-Term/System) + a category filter added to the existing `/quests` page (not a separate page/route); auto-generated System quests via a shared neglected-attribute heuristic (`findNeglectedAttribute`, also used by Feature 3). See `gameplay-systems.md` § "Quest Board and System quests (Feature 2)". |
-| 3 — Daily and Weekly Challenges | Not yet built. |
+| 3 — Daily and Weekly Challenges | **Done** (`feature/daily-weekly-challenges`, Sprint 2's last item). `Challenge` model, lazily generated (same heuristic as Feature 2's System quests); progress driven by a new `ChallengeProgressListener` on `ACTIVITY_COMPLETED_EVENT` - the domain-event system's first listener for a genuinely new concern, not a migrated one. See `gameplay-systems.md` § "Daily and Weekly Challenges (Feature 3)". |
 | 4 — XP Balancing and Diminishing Returns | Not yet built - not part of Sprint 2's scope (roadmap's own sprint grouping puts it under "Quest Progression" but it wasn't selected for this pass). |
 | 6 — Level-Up Rewards | Not yet built - Sprint 3 ("Meaningful Progression"). |
 | 7 — Skill and Attribute Detail Pages | Partially exists already (`/skills/[id]` has level/progress/XP/recent-activity; no "what contributes to this skill?" breakdown or unlocked-perks section yet) - full Feature 7 scope deferred to Sprint 3. |
@@ -436,3 +438,16 @@ previous challenges") - just "which attribute earned the least XP in the last 7 
 with a skill to tag." Real, not a stub, but a narrower first slice; the fuller analysis is closer
 to Phase 4's "Intelligence Layer" in spirit and can build on this heuristic later rather than
 replacing it.
+
+**Deliberate deviation:** Feature 3's proposed `Challenge` shape includes `Difficulty` and
+`Achievement Reward` fields alongside `XP Reward`. Neither is implemented: `Difficulty` has no
+clear meaning for a challenge whose target is chosen by a fixed heuristic rather than a user
+(unlike a quest's difficulty, which the creator picks); `Achievement Reward` would mean building a
+second, achievement-granting side channel outside `AchievementsService.checkAndUnlock`'s existing
+data-driven design, for a feature with no achievements currently defined to grant. Both are cheap,
+additive follow-ups (new nullable columns) if a real need shows up later. Generation also reuses
+Feature 2's exact `findNeglectedAttribute` heuristic rather than the roadmap's own separate
+description of Challenge generation ("recent XP distribution, recent activity, unused skills,
+current goals, current level, previous challenges") - the same "narrower real heuristic, not a
+fuller analysis engine" scoping call as Feature 2's, made once and shared rather than duplicated
+into two independently-drifting narrower heuristics.

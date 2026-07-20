@@ -70,11 +70,23 @@ enum HabitFrequency {
   MONTHLY
 }
 
+enum ChallengeType {
+  DAILY
+  WEEKLY
+}
+
+enum ChallengeStatus {
+  ACTIVE
+  COMPLETED
+  EXPIRED
+}
+
 enum XPSourceType {
   QUEST_COMPLETION
   HABIT_COMPLETION
   GOAL_COMPLETION
   ACHIEVEMENT_BONUS
+  CHALLENGE_COMPLETION
   CORRECTION
 }
 
@@ -144,6 +156,7 @@ model User {
   habits                 Habit[]
   habitCompletions       HabitCompletion[]
   questCompletions       QuestCompletion[]
+  challenges             Challenge[]
   xpTransactions         XPTransaction[]
   userAchievements       UserAchievement[]
   notifications          Notification[]
@@ -203,6 +216,7 @@ model Attribute {
   xpTransactions    XPTransaction[]
   activityBonuses   ActivityAttributeBonus[]
   questRequirements QuestRequirement[]
+  challenges        Challenge[]
 
   @@unique([userId, key])
   @@index([userId])
@@ -260,6 +274,7 @@ model Skill {
   goalSkills        GoalSkill[]
   xpTransactions    XPTransaction[]
   questRequirements QuestRequirement[]
+  challenges        Challenge[]
 
   // Same skill name can exist under different attributes (e.g. "Focus" under
   // both Intelligence and Discipline) as distinct stats, so uniqueness is
@@ -435,6 +450,45 @@ model QuestCompletion {
   @@index([userId])
   @@index([questId])
   @@map("quest_completions")
+}
+
+/// A time-boxed, system-generated objective ("Daily and Weekly Challenges" -
+/// Feature 3), distinct from a Quest: entirely auto-generated (no manual
+/// create/edit endpoints), targets whichever attribute the user has most
+/// neglected recently (see findNeglectedAttribute in
+/// backend/src/common/neglected-attribute.ts - shared with Quest Board's
+/// System quests), and its progress is driven by a domain-event listener
+/// rather than any Quest/Habit/Goal service knowing about it.
+model Challenge {
+  id          String          @id @default(uuid())
+  userId      String
+  type        ChallengeType
+  title       String
+  description String
+  attributeId String
+  /// One of the user's own skills under attributeId, if any existed when generated - DAILY challenges are phrased around it ("complete an activity tagged with X").
+  skillId     String?
+  /// WEEKLY: the XP threshold to reach in attributeId. DAILY: not a threshold - any qualifying completion finishes it immediately (see progressXp).
+  targetXp    Int
+  /// XP earned in attributeId since this challenge was generated, toward targetXp. A listener-updated running total, not re-derived per request.
+  progressXp  Int             @default(0)
+  /// Bonus XP awarded (character-level) when the challenge completes.
+  xpReward    Int
+  status      ChallengeStatus @default(ACTIVE)
+  /// Day-key (DAILY) or Monday-anchored week-key (WEEKLY, see getWeekKey) - dedup key so at most one challenge of a type exists per period.
+  periodKey   String
+  completedAt DateTime?
+  expiresAt   DateTime
+
+  createdAt DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attribute Attribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+  skill     Skill?    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type, periodKey])
+  @@index([userId])
+  @@map("challenges")
 }
 
 model QuestSkill {

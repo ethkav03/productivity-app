@@ -66,6 +66,7 @@ export class ProgressionService {
       })),
       achievementsUnlocked: unlockedAchievements.map((achievement) => achievement.name),
       streak,
+      eventId: xpResult.eventId,
     };
 
     this.eventEmitter.emit(
@@ -78,6 +79,7 @@ export class ProgressionService {
         result.newLevel,
         result.achievementsUnlocked,
         new Date(),
+        result.eventId,
         params.sourceId,
         params.sourceName,
       ),

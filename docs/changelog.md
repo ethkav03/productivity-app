@@ -4,6 +4,49 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-20 — Daily and Weekly Challenges
+
+Closes out "Sprint 2: Quest Progression" (`docs/feature-roadmap.md`) - Phase 1 Feature 3, on its
+own branch (`feature/daily-weekly-challenges`).
+
+Added a new `Challenge` model (migration `20260720190000_daily_weekly_challenges`, plus a new
+`CHALLENGE_COMPLETION` value on `XPSourceType`): entirely system-generated Daily/Weekly
+objectives, no create/edit endpoints. `ChallengesService.getActive` lazily generates one of each
+per period (day-key / Monday-anchored week-key) the same way Quest Board's System quests do,
+reusing the exact same `findNeglectedAttribute` heuristic from last slice rather than building a
+second one. `WEEKLY` challenges get a real 500 XP threshold and track cumulative progress;
+`DAILY` challenges complete on any qualifying XP (a nominal `targetXp: 1`, since "did a matching
+activity happen today" is binary, not cumulative - falls out of the same "add earned XP, check
+`>= targetXp`" logic without a separate code path).
+
+Progress tracking is the domain-event system's first listener for a genuinely *new* concern
+rather than a migrated one - the concrete validation of Feature 0.1's promised payoff. New
+`ChallengeProgressListener` subscribes to `ACTIVITY_COMPLETED_EVENT`; to make that possible,
+threaded a new `eventId` field through `XpAwardResult` → `CompletionResult` →
+`ActivityCompletedEvent`, so the listener can re-query exactly which `XPTransaction` rows a
+completion wrote and sum XP per attribute. Progress is attribute-scoped, not skill-scoped (a
+challenge's `skillId` only describes its wording, it isn't an eligibility filter) - the same
+"attribute-level rows are the source of truth" reasoning used throughout the ledger. The
+completion bonus is awarded via `ProgressionService.completeActivity`, not `XpService.awardXp`
+directly, specifically to avoid becoming an undocumented third consumer of `XpService` (its
+"only `ProgressionModule` and `AdminModule` call this" invariant, stated in `docs/backend.md`
+since Sprint 1) - also arguably more correct, since a challenge completion should count toward
+the character streak and achievement checks like any other completion.
+
+Frontend: a new `ChallengesSection` on the Quest Board page (`/quests`), above the category
+filter, showing up to two challenge cards (a progress bar for `WEEKLY`, a done/not-done state for
+`DAILY`). Polls `GET /challenges` every 5 seconds while mounted and diffs each challenge's
+`status` against the previous poll to fire a one-time celebration toast exactly when one
+transitions to `COMPLETED` - deliberately not routed through `useCelebration`, since a challenge
+completion is a side effect of some *other* mutation, not something returned directly to the
+component that triggered it.
+
+Verified via a real-API script (no challenges before the user has any skills; one DAILY + one
+WEEKLY generated once a skill exists, both targeting the same neglected attribute as a
+System quest would; a qualifying quest completion immediately finishes the DAILY challenge and
+awards its bonus; repeated qualifying completions push the WEEKLY challenge's progress to 500 and
+complete it) and a Playwright browser pass (light + dark) covering both challenge card states.
+
 ## 2026-07-20 — Quest Board
 
 Second slice of "Sprint 2: Quest Progression" (`docs/feature-roadmap.md`) - Phase 1 Feature 2,

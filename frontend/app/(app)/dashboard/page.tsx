@@ -62,6 +62,7 @@ export default function DashboardPage() {
     queryClient.invalidateQueries({ queryKey: ['quests'] });
     queryClient.invalidateQueries({ queryKey: ['achievements'] });
     queryClient.invalidateQueries({ queryKey: ['analytics'] });
+    queryClient.invalidateQueries({ queryKey: ['challenges'] });
     await refreshUser();
     celebrate(result);
   }
@@ -86,6 +87,7 @@ export default function DashboardPage() {
       queryClient.invalidateQueries({ queryKey: ['quests'] });
       queryClient.invalidateQueries({ queryKey: ['achievements'] });
       queryClient.invalidateQueries({ queryKey: ['analytics'] });
+      queryClient.invalidateQueries({ queryKey: ['challenges'] });
       await refreshUser();
       results.forEach((result) => celebrate(result));
     },

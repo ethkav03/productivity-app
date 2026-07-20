@@ -50,7 +50,7 @@ for exact prop shapes, read the referenced files directly.
 | `/dashboard` | `frontend/app/(app)/dashboard/page.tsx` | Home screen: streak + level/XP header, an 8-axis "Character Shape" radar chart of attribute levels, today's habits, active quests (incl. Locked/Complete/Claim Reward states; "Active Quests" card title links to `/quests`), active goals, recent achievements, activity feed. |
 | `/skills` | `frontend/app/(app)/skills/page.tsx` | Skills grouped by the 8 fixed attributes, with progress bars; add-skill modal (suggested or custom) and delete. |
 | `/skills/[id]` | `frontend/app/(app)/skills/[id]/page.tsx` | Single skill detail: rename/edit description, cumulative XP growth chart, recent XP transaction list, delete. |
-| `/quests` | `frontend/app/(app)/quests/page.tsx` | "Quest Board": Active/Completed status tabs plus a Daily/Weekly/Long-Term/System category pill-filter row (`?category=` on `GET /quests`; a category badge shows on non-Long-Term cards), create-quest modal (incl. a category picker, `RewardBundleEditor`, and a `RequirementsEditor` "Prerequisites" disclosure for level-gated quests). Locked quest cards render dimmed with a requirement checklist instead of a Complete button; completing swaps the button to "Claim Reward" (the actual XP-awarding step - see `docs/gameplay-systems.md` §§ "Level-gated quests and reward claiming" / "Quest Board and System quests"). |
+| `/quests` | `frontend/app/(app)/quests/page.tsx` | "Quest Board": a `ChallengesSection` (Daily/Weekly Challenge cards, polling `GET /challenges` every 5s, celebrating on completion) above Active/Completed status tabs plus a Daily/Weekly/Long-Term/System category pill-filter row (`?category=` on `GET /quests`; a category badge shows on non-Long-Term cards), create-quest modal (incl. a category picker, `RewardBundleEditor`, and a `RequirementsEditor` "Prerequisites" disclosure for level-gated quests). Locked quest cards render dimmed with a requirement checklist instead of a Complete button; completing swaps the button to "Claim Reward" (the actual XP-awarding step - see `docs/gameplay-systems.md` §§ "Level-gated quests and reward claiming" / "Quest Board and System quests" / "Daily and Weekly Challenges"). |
 | `/habits` | `frontend/app/(app)/habits/page.tsx` | Today's habits with streak counters, create-habit modal (incl. `RewardBundleEditor`), complete/pause/reactivate/delete. |
 | `/goals` | `frontend/app/(app)/goals/page.tsx` | Active/Completed goal tabs, create-goal modal (incl. `RewardBundleEditor`). |
 | `/goals/[id]` | `frontend/app/(app)/goals/[id]/page.tsx` | Single goal detail: linked quests, log-progress form (binary mark-complete or numeric value entry), delete. |
@@ -227,6 +227,7 @@ interface CompletionResult {
   attributeResults: Array<{ attributeId: string; leveledUp: boolean; newLevel: number }>;
   achievementsUnlocked: string[];
   streak?: { currentStreak: number; longestStreak: number };
+  eventId: string;
 }
 ```
 
@@ -246,6 +247,13 @@ interface CompletionResult {
 Used from the dashboard, quests, habits, and goal-detail pages: each completion mutation's
 `onSuccess` invalidates the relevant query keys, calls `refreshUser()` from `useAuth()` to refresh
 the header's level/XP, and then calls `celebrate(result)`.
+
+Daily/Weekly Challenge completions deliberately don't go through `useCelebration` at all - a
+challenge completes as a side effect of some *other* mutation (whatever quest/habit/goal
+completion pushed its target attribute's XP over the line), detected client-side by
+`ChallengesSection` polling and diffing `status` rather than returned from a mutation the user
+directly triggered. It pushes its own one-off `xp`-variant toast via `useToast()` directly instead
+- see `docs/gameplay-systems.md` § "Daily and Weekly Challenges (Feature 3)".
 
 ### `useTheme` - `frontend/src/hooks/use-theme.ts`
 

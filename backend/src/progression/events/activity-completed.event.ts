@@ -20,6 +20,8 @@ export class ActivityCompletedEvent {
     public readonly newLevel: number,
     public readonly achievementsUnlocked: string[],
     public readonly completedAt: Date,
+    /** Correlates the XPTransaction rows this completion wrote - lets a listener re-query exactly which attributes were credited and by how much, without re-deriving that from scratch. */
+    public readonly eventId: string,
     public readonly sourceId?: string,
     public readonly sourceName?: string,
   ) {}

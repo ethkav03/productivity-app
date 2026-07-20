@@ -130,6 +130,7 @@ export default function HabitsPage() {
       queryClient.invalidateQueries({ queryKey: ['habits'] });
       queryClient.invalidateQueries({ queryKey: ['achievements'] });
       queryClient.invalidateQueries({ queryKey: ['analytics'] });
+      queryClient.invalidateQueries({ queryKey: ['challenges'] });
       await refreshUser();
       celebrate(result);
     },

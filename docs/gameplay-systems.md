@@ -42,7 +42,7 @@ Goals → Quests / Habits → Complete them → XP → Skills level up → Attri
 
 Quests, habits, and goals never call `XpService` or `AchievementsService` directly - they all
 funnel through `ProgressionService.completeActivity` (goal creation is the one exception, see
-section 9).
+section 10).
 
 ## 2. The attribute hierarchy
 
@@ -92,7 +92,7 @@ onboarding flow) explicitly creates `Skill` rows, each pointing at exactly one a
 on `model Skill`. This means the same skill name can legitimately exist twice for one user, as
 long as it's under two different attributes - e.g. a skill named "Focus" as a distinct stat under
 both Intelligence and Discipline. Any code that looks up a skill by `(userId, name)` alone (e.g.
-achievement conditions - see section 9) must also disambiguate by attribute when the name isn't
+achievement conditions - see section 10) must also disambiguate by attribute when the name isn't
 unique for that user.
 
 **Default skill suggestions.** `backend/src/skills/default-skills.ts` exports `DEFAULT_SKILLS`, a
@@ -620,7 +620,88 @@ utility, not owned by `QuestsModule`, specifically so Challenges' generation (a 
 can reuse the identical "what's neglected" definition rather than two heuristics quietly drifting
 apart over time.
 
-## 9. The achievement engine
+## 9. Daily and Weekly Challenges (Feature 3)
+
+### Generation
+
+Like Quest Board's System quests, `ChallengesService.getActive(userId)` generates lazily on read
+rather than via a scheduled job (no cron infrastructure exists) - it calls a private
+`ensureChallenge(userId, type)` for both `DAILY` and `WEEKLY` before listing. `ensureChallenge`:
+
+1. Computes the current period's key - `getDayKey()` for `DAILY`, `getWeekKey()` (a
+   Monday-anchored week, see section 6) for `WEEKLY`.
+2. If a `Challenge` already exists for `(userId, type, periodKey)` (enforced by a
+   `@@unique([userId, type, periodKey])` constraint), no-ops - at most one challenge of each type
+   exists per user per period.
+3. Otherwise calls `findNeglectedAttribute(prisma, userId, { requireSkill: true })` - the exact
+   same heuristic and even the exact same function Quest Board's System quests use (see section
+   8) - and creates a `Challenge` targeting the result. A no-op if the user has no skills
+   anywhere yet, same guard as System quest generation.
+
+`WEEKLY` challenges get a real threshold (`targetXp: 500`) and track cumulative progress toward
+it. `DAILY` challenges get a nominal `targetXp: 1` - not a real threshold, since completing it is
+binary (did a qualifying activity happen today, yes/no) rather than cumulative; any positive XP
+toward the target attribute satisfies it immediately, which falls out of the same "add earned XP,
+check `>= targetXp`" logic used for `WEEKLY` without needing a separate code path (see below).
+
+`expiresAt` is set via `endOfDayUtc()`/`endOfWeekUtc()` (section 6) - midnight UTC at the start of
+the next day/week. `GET /challenges` filters to `expiresAt: { gt: now }`, so an unmet challenge
+past its deadline simply stops appearing rather than being explicitly transitioned to `EXPIRED`
+(that status value exists in the schema but nothing sets it yet - a real gap, not a design
+choice, flagged here rather than silently left undocumented).
+
+### Progress: the domain-event system's first new consumer
+
+Every other listener built so far (`LevelUpNotificationListener`, section 5's "Internal domain
+events (Feature 0.1)") *migrated* an existing side effect off the synchronous completion path. `ChallengeProgressListener`
+(`backend/src/challenges/listeners/challenge-progress.listener.ts`) is the first one built for a
+genuinely new concern - the concrete validation of the payoff Feature 0.1's docs promised:
+Challenges exist, and neither `ProgressionService` nor any of Quests/Habits/Goals had to change at
+all to make them work.
+
+On `ACTIVITY_COMPLETED_EVENT`, the listener:
+
+1. Re-queries `XPTransaction` rows by the event's `eventId` (added to `XpAwardResult` →
+   `CompletionResult` → `ActivityCompletedEvent` specifically to support this - see section 3),
+   filtered to `attributeId: { not: null }`, and sums `amount` per `attributeId`. This is exactly
+   the same "attribute-level rows are the authoritative source of per-attribute XP" reasoning
+   used throughout the ledger.
+2. Finds every `ACTIVE`, unexpired `Challenge` belonging to that user whose `attributeId` is one
+   of the credited attributes.
+3. For each, adds the earned amount to `progressXp`. If the new total reaches `targetXp`, marks
+   the challenge `COMPLETED` and awards `xpReward` (character-level bonus XP) via
+   `ProgressionService.completeActivity` with `sourceType: 'CHALLENGE_COMPLETION'`.
+
+**Progress is attribute-scoped, not skill-scoped.** A challenge's `skillId` only describes which
+skill inspired its wording ("complete an activity tagged with X") - it is *not* an eligibility
+filter. Any XP landing in the challenge's target attribute counts, regardless of which specific
+skill under that attribute earned it. This is a deliberate simplification: filtering by the exact
+skill would mean re-deriving which `QuestSkill`/`HabitSkill`/`GoalSkill` rows produced each
+attribute-level `XPTransaction` row, which the event doesn't currently carry - attribute-level
+scoping was judged close enough to the roadmap's intent to not be worth that additional plumbing.
+
+**Why the completion bonus goes through `ProgressionService`, not `XpService` directly.**
+`XpService` is documented (section 3, and `docs/backend.md`) as having exactly two consumers by
+design - `ProgressionModule` and `AdminModule`. Calling `XpService.awardXp` directly from
+`ChallengeProgressListener` would make it a third, undocumented exception. Routing through
+`ProgressionService.completeActivity` instead keeps that invariant intact, and is arguably more
+correct anyway: a challenge completion is a genuine activity completion as far as the rest of the
+app is concerned - it should count toward the character's daily streak and be visible to
+achievement checks like any other completion, just triggered by a listener instead of a
+controller. This does mean completing a challenge emits its own `ActivityCompletedEvent` in turn,
+which `ChallengeProgressListener` also receives - safe from feedback loops because a
+character-only award (no `skillAwards`/`attributeBonuses`) produces zero attribute-level
+`XPTransaction` rows, so the listener finds nothing to act on and returns immediately.
+
+On the frontend, `ChallengesSection` (`frontend/app/(app)/quests/page.tsx`) polls `GET /challenges`
+every 5 seconds while mounted, since progress lands asynchronously relative to whatever
+quest/habit/goal completion triggered it - a client that only relied on query invalidation after
+its own mutations could miss progress from actions taken elsewhere (or simply not yet reflected
+by the time the listener finishes). It also diffs each challenge's `status` against what it saw
+last render to fire a one-time celebration toast exactly when a challenge transitions to
+`COMPLETED`.
+
+## 10. The achievement engine
 
 `AchievementsService.checkAndUnlock(userId)` (`backend/src/achievements/achievements.service.ts`)
 is **data-driven**: it does not have a `switch` per achievement *name*. Instead, it loads every
@@ -679,7 +760,7 @@ No other resource module calls `checkAndUnlock` directly - if a future achieveme
 react to something other than a completion or a goal creation, it will need its own explicit call
 site analogous to this one.
 
-## 10. Seeded achievements
+## 11. Seeded achievements
 
 From `backend/prisma/seed.ts` (`ACHIEVEMENTS`, upserted by `key` via `npx prisma db seed`):
 
@@ -703,7 +784,7 @@ That's 13 achievements. None of the current seed rows use `SKILL_LEVEL_REACHED` 
 `SKILL_ACTIVITY_COUNT`, even though `AchievementsService` fully supports both - those two
 requirement types are implemented and ready but not yet exercised by any seeded achievement.
 
-## 11. Friends & Leaderboard
+## 12. Friends & Leaderboard
 
 `FriendsModule` (`backend/src/friends/`) and `LeaderboardModule` (`backend/src/leaderboard/`) add
 a lightweight social layer on top of the character system: a friend-request graph, and a
@@ -757,7 +838,7 @@ resettable leaderboard reads more naturally as "who's ahead this calendar week" 
 in the last 168 hours," and a calendar boundary is what lets "this week's leaderboard" mean the
 same thing to every friend looking at it, regardless of when each of them checks.
 
-## 12. Keep this file in sync
+## 13. Keep this file in sync
 
 This file documents **why** the gameplay mechanics work the way they do, not just what the code
 currently says - the reasoning here (full XP per tagged skill/attribute, the

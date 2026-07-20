@@ -8,7 +8,7 @@ every model, enum, and constraint currently in that schema.
 
 ## Migration history
 
-Nine migrations exist as of this writing:
+Ten migrations exist as of this writing:
 
 | Migration folder | What it added |
 | --- | --- |
@@ -21,6 +21,7 @@ Nine migrations exist as of this writing:
 | `20260720160000_xp_bundles` | Adds `amount Int?` to `QuestSkill`, `HabitSkill`, and `GoalSkill` (a per-skill XP override, null meaning "inherit the activity's flat `xpReward`"); introduces the `ActivityAttributeBonus` model (bonus XP paid directly into an attribute, with no tagged skill, for a `Quest`/`Habit`/`Goal`). Backs "XP Bundles" - see the model reference below and `docs/gameplay-systems.md`. |
 | `20260720170000_level_gated_quests` | Introduces `QuestRequirement` (a prerequisite a quest is locked behind - level threshold, activity count, achievement, another quest, or a goal) and `QuestCompletion` (one row per quest completion, tracking whether its reward has been claimed). Backs "level-gated quests" and "reward claiming" - see the model reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 1". |
 | `20260720180000_quest_board` | Adds `Quest.category` (`QuestCategory`, `@default(LONG_TERM)`, not nullable - existing rows backfilled to `LONG_TERM`). Backs "Quest Board" grouping (Daily/Weekly/Long-Term/System) - see the enum reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 2". |
+| `20260720190000_daily_weekly_challenges` | Adds `CHALLENGE_COMPLETION` to `XPSourceType`; introduces `Challenge` (a time-boxed, entirely system-generated Daily/Weekly objective) and its `ChallengeType`/`ChallengeStatus` enums. Backs "Daily and Weekly Challenges" - see the model reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 3". |
 
 `migration_lock.toml` pins the schema to the `postgresql` provider (Prisma refuses to mix
 providers across migrations once this file exists).
@@ -40,6 +41,7 @@ User ──┬── Attribute (8 fixed, auto-created at registration)
        ├── Goal, Quest, Habit, HabitCompletion  (also owned directly by User)
        ├── Quest ──┬── QuestRequirement ──── one of Skill / Attribute / Achievement / Quest / Goal
        │           └── QuestCompletion (one row per completion, tracks claimedAt)
+       ├── Challenge ──── Attribute (targeted) + optional Skill (descriptive)
        ├── XPTransaction (references User, and optionally Skill and/or Attribute)
        ├── UserAchievement ──── Achievement (global, not per-user)
        ├── Notification
@@ -92,9 +94,9 @@ Represents an account/character: identity, auth state, and the top-level charact
 | `updatedAt` | `DateTime` | `@updatedAt` | |
 
 **Relations:** `skills[]`, `attributes[]`, `goals[]`, `quests[]`, `habits[]`,
-`habitCompletions[]`, `questCompletions[]`, `xpTransactions[]`, `userAchievements[]`,
-`notifications[]` — all one-to-many, all with `onDelete: Cascade` from the child side (deleting a
-`User` deletes every dependent row).
+`habitCompletions[]`, `questCompletions[]`, `challenges[]`, `xpTransactions[]`,
+`userAchievements[]`, `notifications[]` — all one-to-many, all with `onDelete: Cascade` from the
+child side (deleting a `User` deletes every dependent row).
 
 **Constraints:** none beyond the field-level `@unique` on `email` and `username`. Maps to table
 `users`.
@@ -124,7 +126,8 @@ earns in any skill that belongs to it (see `XpService.awardXp`).
 **Relations:** `user` (FK `userId → User.id`, `onDelete: Cascade`), `skills[]` (one attribute
 has many skills), `xpTransactions[]` (XP transactions that mirrored into this attribute),
 `activityBonuses[]` (`ActivityAttributeBonus[]` targeting this attribute), `questRequirements[]`
-(`QuestRequirement[]` using this attribute for a `LEVEL_THRESHOLD` check).
+(`QuestRequirement[]` using this attribute for a `LEVEL_THRESHOLD` check), `challenges[]`
+(`Challenge[]` targeting this attribute).
 
 **Constraints:**
 - `@@unique([userId, key])` — a user can have at most one `Attribute` row per fixed key (i.e.
@@ -157,7 +160,8 @@ exactly one `Attribute` and accrues its own XP/level independently of the charac
 **Relations:** `user` (`onDelete: Cascade`), `attribute` (`onDelete: Cascade`),
 `questSkills[]`, `habitSkills[]`, `goalSkills[]` (join-table rows tagging this skill onto
 quests/habits/goals), `xpTransactions[]`, `questRequirements[]` (`QuestRequirement[]` using this
-skill for a `LEVEL_THRESHOLD` or `ACTIVITY_COUNT` check).
+skill for a `LEVEL_THRESHOLD` or `ACTIVITY_COUNT` check), `challenges[]` (`Challenge[]`
+referencing this skill descriptively - see `Challenge.skillId`).
 
 **Constraints:**
 - `@@unique([userId, attributeId, name])` — the same skill name can exist under different
@@ -333,6 +337,43 @@ editing a quest's reward between completing and claiming it changes what's paid 
 - `@@index([userId])`, `@@index([questId])`
 
 Maps to table `quest_completions`.
+
+---
+
+### Challenge
+
+A time-boxed, entirely system-generated objective ("Daily and Weekly Challenges") - distinct from
+a `Quest`: no create/edit endpoints exist, it targets whichever attribute the user has most
+neglected recently, and its progress is driven by a domain-event listener
+(`ChallengeProgressListener`) rather than any `Quest`/`Habit`/`Goal` service knowing it exists.
+
+| Field | Type | Default / Nullable | Notes |
+| --- | --- | --- | --- |
+| `id` | `String` (uuid) | `@default(uuid())`, PK | |
+| `userId` | `String` | required | FK to `User`. |
+| `type` | `ChallengeType` | required | `DAILY` or `WEEKLY` - see enum reference. |
+| `title` | `String` | required | |
+| `description` | `String` | required | |
+| `attributeId` | `String` | required | FK to `Attribute` - the targeted (neglected) attribute. |
+| `skillId` | `String?` | nullable | FK to `Skill` - one of the user's own skills under `attributeId`, if any existed when generated. `DAILY` challenges are phrased around it ("complete an activity tagged with X"). |
+| `targetXp` | `Int` | required | `WEEKLY`: the XP threshold to reach in `attributeId`. `DAILY`: not a real threshold - a nominal `1`, since any qualifying completion finishes it immediately. |
+| `progressXp` | `Int` | `@default(0)` | XP earned in `attributeId` since generation, toward `targetXp` - a running total updated by the listener, not re-derived per request. |
+| `xpReward` | `Int` | required | Bonus XP awarded (character-level, via `ProgressionService.completeActivity`) when the challenge completes. |
+| `status` | `ChallengeStatus` | `@default(ACTIVE)` | See enum reference. |
+| `periodKey` | `String` | required | Day-key (`DAILY`) or Monday-anchored week-key (`WEEKLY`, see `getWeekKey`) - dedup key so at most one challenge of a type exists per period. |
+| `completedAt` | `DateTime?` | nullable | |
+| `expiresAt` | `DateTime` | required | End of the day (`DAILY`) or week (`WEEKLY`) it was generated for. |
+| `createdAt` | `DateTime` | `@default(now())` | |
+
+**Relations:** `user` (`onDelete: Cascade`), `attribute` (`onDelete: Cascade`), `skill` (optional,
+`onDelete: Cascade`).
+
+**Constraints:**
+- `@@unique([userId, type, periodKey])` — at most one `DAILY` and one `WEEKLY` challenge per
+  user per period; `ChallengesService.ensureChallenge` checks this before generating.
+- `@@index([userId])`
+
+Maps to table `challenges`.
 
 ---
 
@@ -668,6 +709,21 @@ fields each type uses.
 | `TIMES_PER_WEEK` | Expected a target number of times per week, per `Habit.timesPerWeek`. |
 | `MONTHLY` | Expected once per month. |
 
+### ChallengeType
+
+| Value | Meaning |
+| --- | --- |
+| `DAILY` | Expires at the end of the UTC day it was generated for; completes immediately on any qualifying XP. |
+| `WEEKLY` | Expires at the end of the Monday-anchored UTC week it was generated for; completes once `progressXp` reaches `targetXp`. |
+
+### ChallengeStatus
+
+| Value | Meaning |
+| --- | --- |
+| `ACTIVE` | Not yet completed, not yet expired (the schema default). |
+| `COMPLETED` | `progressXp` reached `targetXp` before `expiresAt`. |
+| `EXPIRED` | Reserved for a future explicit expiry sweep - nothing currently transitions a `Challenge` to this status; an unmet challenge past `expiresAt` is simply excluded from `GET /challenges`' results rather than updated in place. |
+
 ### XPSourceType
 
 | Value | Meaning |
@@ -676,6 +732,7 @@ fields each type uses.
 | `HABIT_COMPLETION` | XP granted from completing a `Habit` (a `HabitCompletion`). |
 | `GOAL_COMPLETION` | XP granted from completing a `Goal`. |
 | `ACHIEVEMENT_BONUS` | XP granted as a bonus for unlocking an `Achievement`. |
+| `CHALLENGE_COMPLETION` | Bonus XP granted for completing a `Challenge` (Daily/Weekly). |
 | `CORRECTION` | Manual adjustment to a user's XP ledger (can carry a negative `amount`); paired with `XPTransaction.note` to explain the adjustment. |
 
 ### AchievementRequirementType

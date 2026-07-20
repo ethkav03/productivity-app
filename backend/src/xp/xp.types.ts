@@ -49,6 +49,8 @@ export interface XpAwardResult {
    * twice, mirroring how each skill itself gets the full XP amount.
    */
   attributes: AttributeXpResult[];
+  /** Correlates every XPTransaction row this call wrote - lets a listener re-query exactly which rows (and how much per attribute) this event produced. */
+  eventId: string;
 }
 
 export interface ApplyCorrectionParams {

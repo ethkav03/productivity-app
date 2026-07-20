@@ -874,6 +874,52 @@ Errors: `404` / `403`.
 
 ---
 
+## Challenges (`/challenges`)
+
+All routes require a Bearer token. Entirely system-generated - no create/update/delete endpoint.
+
+### `GET /challenges`
+
+Ensures the caller has an up-to-date `DAILY` and `WEEKLY` challenge (generating one via the same
+neglected-attribute heuristic Quest Board's System quests use if none exists from the current
+period - see `docs/gameplay-systems.md`), then returns whichever haven't expired.
+
+Response: `200 OK`, array of `Challenge` (0-2 entries - 0 if the caller has no skills anywhere
+yet, since there's nothing sensible to build a challenge around):
+
+```ts
+{
+  id: string;
+  userId: string;
+  type: 'DAILY' | 'WEEKLY';
+  title: string;
+  description: string;
+  attributeId: string;
+  attributeName: string;
+  attributeKey: AttributeKey;
+  skillId: string | null;
+  skillName: string | null;
+  targetXp: number;       // WEEKLY: an XP threshold. DAILY: nominal (1) - any qualifying completion finishes it immediately
+  progressXp: number;     // running total, updated by ChallengeProgressListener as matching activities complete
+  progressPercent: number; // 0-100, 100 once status is COMPLETED
+  xpReward: number;       // bonus XP awarded (character-level) on completion
+  status: 'ACTIVE' | 'COMPLETED' | 'EXPIRED';
+  periodKey: string;
+  completedAt: string | null;
+  expiresAt: string;
+  createdAt: string;
+}
+```
+
+Progress is attribute-scoped, not skill-scoped: any XP landing in `attributeId` counts toward
+`progressXp`, regardless of which specific skill earned it - `skillId`/`skillName` describe which
+skill inspired the challenge's wording, they aren't an eligibility filter. Progress updates
+asynchronously (a fire-and-forget domain-event listener, not part of the HTTP response of
+whatever quest/habit/goal completion triggered it) - a client polling this endpoint may briefly
+see stale `progressXp`/`status` for a moment after a qualifying completion.
+
+---
+
 ## Achievements (`/achievements`)
 
 All routes require a Bearer token. There is no create/update/delete endpoint — achievement
@@ -1456,10 +1502,12 @@ Errors: `404 Not Found`.
 
 ## CompletionResult shape
 
-`POST /quests/:id/complete`, `POST /habits/:id/complete`, and `POST /goals/:id/progress` (when
+`POST /quests/:id/claim`, `POST /habits/:id/complete`, and `POST /goals/:id/progress` (when
 progress causes the goal to complete) all delegate to the shared
 `ProgressionService.completeActivity` workflow
-(`backend/src/progression/progression.types.ts`), and return (or embed) its result:
+(`backend/src/progression/progression.types.ts`), and return (or embed) its result. (Note:
+`POST /quests/:id/complete` itself does **not** - it only marks a `QuestCompletion` row; claiming
+is the step that actually runs this workflow - see "Reward claiming" in the Quests section.)
 
 ```ts
 interface CompletionResult {
@@ -1472,6 +1520,7 @@ interface CompletionResult {
   streak?: { currentStreak: number; longestStreak: number }; // character-level streak, present
                                                                // when the activity counts toward
                                                                // the daily streak (the default)
+  eventId: string; // correlates this call's XPTransaction rows - see docs/gameplay-systems.md
 }
 ```
 
@@ -1479,14 +1528,16 @@ This one workflow is responsible for: creating the `XPTransaction` ledger rows (
 character-level row plus one per associated skill and one per that skill's attribute),
 recalculating levels for the character/skills/attributes from cumulative XP, updating the
 character's daily streak, running the achievement engine
-(`AchievementsService.checkAndUnlock`), and raising any resulting notifications
-(`LEVEL_UP`, `ACHIEVEMENT_UNLOCK`) — so every resource module gets identical behavior instead of
-reimplementing it.
+(`AchievementsService.checkAndUnlock`), and emitting an internal `ActivityCompletedEvent` (not
+API-visible - see `docs/gameplay-systems.md` § "Internal domain events") — so every resource
+module gets identical behavior instead of reimplementing it. Daily/Weekly Challenge completions
+also flow through this same workflow (`sourceType: 'CHALLENGE_COMPLETION'`), triggered by an
+event listener rather than a controller - see the Challenges section below.
 
-Endpoints returning a bare `CompletionResult` (`quests/:id/complete`, `habits/:id/complete`)
-respond `200 OK` with the object above directly. `goals/:id/progress` wraps it as
-`{ goal, completion? }` (see the Goals section) since a progress update doesn't always complete
-the goal.
+Endpoints returning a bare `CompletionResult` (`quests/:id/claim` returns `CompletionResult[]` -
+one per completion claimed; `habits/:id/complete` returns a single one) respond `200 OK` with the
+object(s) above directly. `goals/:id/progress` wraps it as `{ goal, completion? }` (see the Goals
+section) since a progress update doesn't always complete the goal.
 
 ---
 

@@ -85,7 +85,7 @@ listed in any other module's `imports` array.
 
 | Module | Imports (from `imports: [...]`) |
 | --- | --- |
-| `AppModule` | `ConfigModule` (global), `ThrottlerModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `AttributesModule`, `SkillsModule`, `XpModule`, `ProgressionModule`, `AchievementsModule`, `NotificationsModule`, `QuestsModule`, `HabitsModule`, `GoalsModule`, `AnalyticsModule`, `FriendsModule`, `LeaderboardModule`, `AdminModule` |
+| `AppModule` | `ConfigModule` (global), `EventEmitterModule`, `ThrottlerModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `AttributesModule`, `SkillsModule`, `XpModule`, `ProgressionModule`, `AchievementsModule`, `NotificationsModule`, `QuestsModule`, `HabitsModule`, `GoalsModule`, `ChallengesModule`, `AnalyticsModule`, `FriendsModule`, `LeaderboardModule`, `AdminModule` |
 | `PrismaModule` | *(none — `@Global()`, exports `PrismaService` to every other module implicitly)* |
 | `AuthModule` | `PassportModule`, `JwtModule.register({})`, `AttributesModule` |
 | `UsersModule` | *(none)* |
@@ -98,6 +98,7 @@ listed in any other module's `imports` array.
 | `QuestsModule` | `ProgressionModule`, `SkillsModule`, `AttributesModule` |
 | `HabitsModule` | `ProgressionModule`, `SkillsModule`, `AttributesModule` |
 | `GoalsModule` | `ProgressionModule`, `SkillsModule`, `AchievementsModule`, `AttributesModule` |
+| `ChallengesModule` | `ProgressionModule` |
 | `AnalyticsModule` | *(none)* |
 | `FriendsModule` | *(none)* |
 | `LeaderboardModule` | `FriendsModule` |
@@ -134,6 +135,8 @@ AppModule
 │   ├── SkillsModule
 │   ├── AchievementsModule (see above)
 │   └── AttributesModule (see above)
+├── ChallengesModule
+│   └── ProgressionModule (see above)
 ├── AnalyticsModule
 ├── FriendsModule
 ├── LeaderboardModule
@@ -145,10 +148,14 @@ AppModule
 ```
 
 `ProgressionModule` is the hub of the gameplay-facing side of the graph: it is the only module
-`QuestsModule`, `HabitsModule`, and `GoalsModule` import to reach `XpService`,
+`QuestsModule`, `HabitsModule`, `GoalsModule`, and `ChallengesModule` import to reach `XpService`,
 `AchievementsService`, and `NotificationsService` — none of the activity modules import
 `XpModule`, `AchievementsModule`, or `NotificationsModule` directly (`GoalsModule` is the one
 exception, importing `AchievementsModule` directly too — see the Goals section).
+`ChallengesModule` only reaches `ProgressionService` indirectly, via its
+`ChallengeProgressListener` provider - it has no controller-driven path to it at all, only the
+`ACTIVITY_COMPLETED_EVENT` listener (see "Internal domain events" and the Challenges section
+below).
 
 ## 3. Module reference
 
@@ -306,7 +313,10 @@ The centralized XP ledger. No controller — it is a pure backend service consum
     accepts an optional `sourceName` (the caller's activity title, e.g. a quest's title),
     written onto every row from the call so its label survives the source being renamed or
     deleted later. Throws `BadRequestException` if `amount <= 0`, or if any `skillAwards[].amount`
-    or `attributeBonuses[].amount` is present and not a positive integer.
+    or `attributeBonuses[].amount` is present and not a positive integer. Returns the call's
+    `eventId` as part of `XpAwardResult` (threaded through `CompletionResult`/
+    `ActivityCompletedEvent` too) so a listener can re-query exactly which rows this call wrote -
+    `ChallengeProgressListener` is the first consumer of this (see the Challenges section).
   - `getRecentActivity(userId, limit = 20)` — most recent `XPTransaction` rows for a user,
     including a minimal `skill` relation.
   - `applyCorrection(params)` — a direct, out-of-band ledger correction: the only place `amount`
@@ -332,39 +342,52 @@ controller — Quests/Habits/Goals call into it instead of composing
     `params.updateCharacterStreak === false`) updates the character's streak, then calls
     `AchievementsService.checkAndUnlock`, builds a combined `CompletionResult` (xpGained,
     levelUp/newLevel, per-skill and per-attribute level results, unlocked achievement names,
-    streak), emits an `ActivityCompletedEvent` (fire-and-forget, not awaited) carrying that same
-    data, and returns the `CompletionResult`. XP/streak/achievements stay inline because they
-    feed the returned response; the level-up notification does not, so it has moved off this
-    path entirely — see "Internal domain events" below.
+    streak, `eventId`), emits an `ActivityCompletedEvent` (fire-and-forget, not awaited) carrying
+    that same data, and returns the `CompletionResult`. XP/streak/achievements stay inline
+    because they feed the returned response; the level-up notification does not, so it has moved
+    off this path entirely — see "Internal domain events" below. Called directly by
+    `HabitsService`/`GoalsService`, and by `QuestsService.claimReward` (not `.complete`) and
+    `ChallengeProgressListener` (not any controller).
   - *(private)* `updateCharacterStreak(userId)` — computes the new `currentStreak`/
     `longestStreak` via `getDayKey`/`nextStreakValue` and persists them plus `lastActivityAt`.
-- **Depended on by:** `QuestsModule`, `HabitsModule`, `GoalsModule`.
+- **Depended on by:** `QuestsModule`, `HabitsModule`, `GoalsModule`, `ChallengesModule`.
 
 #### Internal domain events (`backend/src/progression/events/`, `backend/src/progression/listeners/`)
 
 A single in-process event, `ActivityCompletedEvent` (`events/activity-completed.event.ts`),
 fired via `EventEmitter2.emit()` at the end of every `completeActivity` call. It carries
 `userId`, `sourceType`, `sourceId?`, `sourceName?`, `xpGained`, `levelUp`, `newLevel`,
-`achievementsUnlocked`, and `completedAt` — everything a listener would otherwise have to
-re-derive. Emission is fire-and-forget (`emit`, not `emitAsync`): nothing in `completeActivity`
-awaits a listener, so a broken or slow listener can never delay or fail the HTTP response.
+`achievementsUnlocked`, `completedAt`, and `eventId` — everything a listener would otherwise have
+to re-derive, including a correlation key it can use to re-query the exact `XPTransaction` rows
+this call wrote. Emission is fire-and-forget (`emit`, not `emitAsync`): nothing in
+`completeActivity` awaits a listener, so a broken or slow listener can never delay or fail the
+HTTP response.
 
-Today's one listener, `LevelUpNotificationListener`
-(`listeners/level-up-notification.listener.ts`, registered as a provider in `ProgressionModule`),
-replaces what used to be an inline `if (leveledUp) await notificationsService.create(...)` call
-in `completeActivity` — the `LEVEL_UP` notification is a pure side effect that was never part of
-`CompletionResult`, so moving it off the synchronous path changes nothing observable. It wraps
-its work in a `try`/`catch` (logging via Nest's `Logger` on failure) since nothing awaits it and
-an uncaught rejection in a fire-and-forget listener would otherwise surface as an unhandled
-promise rejection.
+Two listeners exist today, both registered as providers in their own module (not
+`ProgressionModule`, which has no idea either exists):
+
+- `LevelUpNotificationListener` (`progression/listeners/level-up-notification.listener.ts`,
+  provider in `ProgressionModule`) replaces what used to be an inline
+  `if (leveledUp) await notificationsService.create(...)` call in `completeActivity` — the
+  `LEVEL_UP` notification is a pure side effect that was never part of `CompletionResult`, so
+  moving it off the synchronous path changes nothing observable.
+- `ChallengeProgressListener` (`challenges/listeners/challenge-progress.listener.ts`, provider in
+  `ChallengesModule`) — the first listener built for a genuinely *new* concern rather than a
+  migrated one, validating the system's actual payoff. See the Challenges section for what it
+  does.
+
+Both wrap their work in a `try`/`catch` (logging via Nest's `Logger` on failure) since nothing
+awaits them and an uncaught rejection in a fire-and-forget listener would otherwise surface as an
+unhandled promise rejection.
 
 The point of this layer, per the roadmap's own framing (`docs/feature-roadmap.md` § "Feature
-0.1"), is that future concerns — challenges, seasons, AI analysis, a timeline view — can
-subscribe to `ACTIVITY_COMPLETED_EVENT` without `ProgressionService` ever needing to know they
-exist. XP, streak, and achievement-unlocking are deliberately *not* migrated to listeners: they
-feed directly into the value `completeActivity` returns, and turning them into fire-and-forget
-listeners would either break that return contract or require re-introducing the same kind of
-awaited, ordered aggregation this system exists to avoid.
+0.1"), is that concerns like Challenges can subscribe to `ACTIVITY_COMPLETED_EVENT` without
+`ProgressionService` ever needing to know they exist — `ChallengesModule` proves this: it has no
+controller-driven relationship to `ProgressionModule` at all, only its listener. XP, streak, and
+achievement-unlocking are deliberately *not* migrated to listeners: they feed directly into the
+value `completeActivity` returns, and turning them into fire-and-forget listeners would either
+break that return contract or require re-introducing the same kind of awaited, ordered
+aggregation this system exists to avoid.
 
 ### `AchievementsModule` (`backend/src/achievements/`)
 
@@ -539,6 +562,41 @@ quests) — and can optionally require linked skills.
   - *(private)* `serialize`, `getOwnedGoal`.
 - **Depended on by:** nothing (only `AppModule`).
 
+### `ChallengesModule` (`backend/src/challenges/`)
+
+Entirely system-generated Daily/Weekly Challenges — no create/update/delete endpoint. Lazily
+generated on read (the same pattern Quest Board's System quests use), and progressed by a
+domain-event listener rather than any controller action.
+
+- **Imports:** `ProgressionModule` (used only by `ChallengeProgressListener`, not
+  `ChallengesService`).
+- **Controller:** `ChallengesController` — `GET /api/challenges` — guarded.
+- **Exports:** `ChallengesService`.
+  - `getActive(userId)` — calls `ensureChallenge` for both `DAILY` and `WEEKLY`, then returns
+    every non-expired challenge for the user, serialized with `attributeName`/`attributeKey`/
+    `skillName` and a derived `progressPercent`.
+  - *(private)* `ensureChallenge(userId, type)` — if the user already has a challenge of that
+    type for the current period (`getDayKey()`/`getWeekKey()`), no-ops. Otherwise calls
+    `findNeglectedAttribute(prisma, userId, { requireSkill: true })`
+    (`backend/src/common/neglected-attribute.ts` — shared with `QuestsService.ensureSystemQuest`)
+    and creates a `Challenge` targeting the result (no-op if the user has no skills anywhere
+    yet). `WEEKLY`: `targetXp: 500`, tracks cumulative progress. `DAILY`: `targetXp: 1` (nominal
+    — completes on any qualifying XP, not a real threshold).
+- **`challenges/listeners/challenge-progress.listener.ts`**: `ChallengeProgressListener`,
+  registered as a provider here (not `ProgressionModule` — see "Internal domain events" above).
+  On `ACTIVITY_COMPLETED_EVENT`, re-queries `XPTransaction` rows by the event's `eventId` to get
+  exactly which attributes were credited and by how much, sums per attribute, then for every
+  `ACTIVE`, unexpired challenge whose `attributeId` matches, adds the earned amount to
+  `progressXp` and marks it `COMPLETED` (+ awards `xpReward` via
+  `ProgressionService.completeActivity`, `sourceType: 'CHALLENGE_COMPLETION'`) once `progressXp
+  >= targetXp`. Deliberately routes the completion bonus through `ProgressionService` rather than
+  calling `XpService.awardXp` directly, to keep `XpService`'s "only `ProgressionModule` and
+  `AdminModule` call this" invariant intact — a challenge completion counts toward the character
+  streak and achievement checks like any other activity completion, it's just triggered by a
+  listener instead of a controller. Progress is attribute-scoped, not skill-scoped — a
+  challenge's `skillId` is descriptive only.
+- **Depended on by:** nothing (only `AppModule`).
+
 ### `AnalyticsModule` (`backend/src/analytics/`)
 
 Read-only aggregation over the XP ledger and related resources — no writes, no `exports`
@@ -693,6 +751,11 @@ directly wherever needed rather than injected.
   `previousStreak + 1`; anything else (gap) → resets to `1`. Shared by the character's streak
   (`ProgressionService.updateCharacterStreak`) and each habit's own streak
   (`HabitsService.complete`).
+- `getWeekKey(date = new Date())` — Monday-anchored week key (UTC), returned as that Monday's own
+  `getDayKey()` string rather than an ISO week number, so it stays comparable/sortable with plain
+  day keys. Used by `Challenge.periodKey` for `WEEKLY` challenges.
+- `endOfDayUtc(date = new Date())` / `endOfWeekUtc(date = new Date())` — midnight UTC at the start
+  of the next day / the Monday after this week, respectively. Used as `Challenge.expiresAt`.
 
 ### `neglected-attribute.ts`
 

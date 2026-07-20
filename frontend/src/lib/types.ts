@@ -170,6 +170,32 @@ export interface QuestCompletionRecord {
   claimedAt: string | null;
 }
 
+export type ChallengeType = 'DAILY' | 'WEEKLY';
+export type ChallengeStatus = 'ACTIVE' | 'COMPLETED' | 'EXPIRED';
+
+/** GET /challenges - entirely system-generated, no create/edit. */
+export interface Challenge {
+  id: string;
+  userId: string;
+  type: ChallengeType;
+  title: string;
+  description: string;
+  attributeId: string;
+  attributeName: string;
+  attributeKey: AttributeKey;
+  skillId: string | null;
+  skillName: string | null;
+  targetXp: number;
+  progressXp: number;
+  progressPercent: number;
+  xpReward: number;
+  status: ChallengeStatus;
+  periodKey: string;
+  completedAt: string | null;
+  expiresAt: string;
+  createdAt: string;
+}
+
 export interface Quest {
   id: string;
   userId: string;

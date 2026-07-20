@@ -1,12 +1,12 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { CalendarClock, CheckSquare, Gift, Lock, Plus, Target } from 'lucide-react';
+import { CalendarClock, CheckSquare, Flame, Gift, Lock, Plus, Target } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useCelebration } from '@/hooks/use-celebration';
 import { getApiErrorMessage } from '@/lib/api-client';
@@ -15,7 +15,8 @@ import { getGoals } from '@/lib/api/goals';
 import { getSkills } from '@/lib/api/skills';
 import { getAttributes } from '@/lib/api/attributes';
 import { getAchievements } from '@/lib/api/achievements';
-import { Quest, QuestCategory, QuestDifficulty, QuestRequirementInput, QuestType } from '@/lib/types';
+import { getChallenges } from '@/lib/api/challenges';
+import { Challenge, Quest, QuestCategory, QuestDifficulty, QuestRequirementInput, QuestType } from '@/lib/types';
 import { AttributeDots } from '@/components/ui/attribute-dots';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -24,6 +25,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { FieldError, Input, Label, Select, Textarea } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
 import { PillSelect } from '@/components/ui/pill-select';
+import { ProgressBar } from '@/components/ui/progress-bar';
 import { RewardBundleEditor, RewardBundleValue } from '@/components/ui/reward-bundle-editor';
 import { RequirementsEditor } from '@/components/ui/requirements-editor';
 import { PageSpinner, Spinner } from '@/components/ui/spinner';
@@ -127,6 +129,10 @@ export default function QuestsPage() {
       queryClient.invalidateQueries({ queryKey: ['quests'] });
       queryClient.invalidateQueries({ queryKey: ['achievements'] });
       queryClient.invalidateQueries({ queryKey: ['analytics'] });
+      // Challenge progress is driven by an async domain-event listener, so this
+      // may still show stale data for a moment - ChallengesSection also polls
+      // every 5s as a fallback in case the listener hasn't finished yet.
+      queryClient.invalidateQueries({ queryKey: ['challenges'] });
       await refreshUser();
       results.forEach((result) => celebrate(result));
     },
@@ -149,6 +155,8 @@ export default function QuestsPage() {
           Create Quest
         </Button>
       </div>
+
+      <ChallengesSection />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex rounded-xl border border-border bg-surface p-1">
@@ -224,6 +232,70 @@ export default function QuestsPage() {
       )}
 
       <CreateQuestModal open={createOpen} onClose={() => setCreateOpen(false)} />
+    </div>
+  );
+}
+
+/**
+ * System-generated Daily/Weekly Challenges - read-only, no create/edit UI.
+ * Polls every 5s while mounted since a challenge's progress is driven by a
+ * fire-and-forget domain-event listener on the backend (see
+ * docs/gameplay-systems.md), so it can land slightly after the HTTP
+ * response for whatever quest/habit/goal completion triggered it.
+ */
+function ChallengesSection() {
+  const { push } = useToast();
+  const previousStatuses = useRef<Map<string, Challenge['status']>>(new Map());
+
+  const challengesQuery = useQuery({
+    queryKey: ['challenges'],
+    queryFn: getChallenges,
+    refetchInterval: 5000,
+  });
+
+  const challenges = useMemo(
+    () => [...(challengesQuery.data ?? [])].sort((a, b) => a.type.localeCompare(b.type)),
+    [challengesQuery.data],
+  );
+
+  useEffect(() => {
+    if (!challengesQuery.data) return;
+    for (const challenge of challengesQuery.data) {
+      const previousStatus = previousStatuses.current.get(challenge.id);
+      if (challenge.status === 'COMPLETED' && previousStatus !== 'COMPLETED') {
+        push({ variant: 'xp', title: 'Challenge complete!', description: `${challenge.title} - +${challenge.xpReward} XP` });
+      }
+      previousStatuses.current.set(challenge.id, challenge.status);
+    }
+  }, [challengesQuery.data, push]);
+
+  if (challenges.length === 0) return null;
+
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      {challenges.map((challenge) => (
+        <Card key={challenge.id} className={challenge.status === 'COMPLETED' ? 'border-success/40' : undefined}>
+          <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted">
+            <Flame className="h-3.5 w-3.5" />
+            {challenge.type === 'DAILY' ? 'Daily Challenge' : 'Weekly Challenge'}
+          </div>
+          <p className="text-sm font-semibold text-foreground">{challenge.title}</p>
+          <p className="mt-1 text-xs text-muted">{challenge.description}</p>
+          <div className="mt-3 flex items-center justify-between gap-2">
+            {challenge.type === 'WEEKLY' ? (
+              <div className="flex-1">
+                <ProgressBar value={challenge.progressPercent} size="sm" />
+                <p className="mt-1 text-xs text-muted">
+                  {challenge.progressXp}/{challenge.targetXp} XP
+                </p>
+              </div>
+            ) : (
+              <span className="text-xs text-muted">{challenge.status === 'COMPLETED' ? 'Complete' : 'Not yet done today'}</span>
+            )}
+            <Badge variant={challenge.status === 'COMPLETED' ? 'success' : 'accent'}>+{challenge.xpReward} XP</Badge>
+          </div>
+        </Card>
+      ))}
     </div>
   );
 }

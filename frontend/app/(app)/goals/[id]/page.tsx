@@ -79,6 +79,7 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
       queryClient.invalidateQueries({ queryKey: ['goals', params.id] });
       setProgressValue(String(data.goal.currentValue));
       if (data.completion) {
+        queryClient.invalidateQueries({ queryKey: ['challenges'] });
         await refreshUser();
         celebrate(data.completion);
       }

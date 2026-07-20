@@ -25,4 +25,6 @@ export interface CompletionResult {
   attributeResults: Array<{ attributeId: string; leveledUp: boolean; newLevel: number }>;
   achievementsUnlocked: string[];
   streak?: { currentStreak: number; longestStreak: number };
+  /** Correlates the XPTransaction rows this completion wrote - see XpAwardResult.eventId. */
+  eventId: string;
 }
