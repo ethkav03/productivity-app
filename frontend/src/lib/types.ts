@@ -560,6 +560,36 @@ export interface TimelineEvent {
   description: string | null;
 }
 
+export type RecommendationType =
+  | 'NEGLECTED_ATTRIBUTE'
+  | 'MOMENTUM'
+  | 'DEADLINE_SOON'
+  | 'STALE_GOAL'
+  | 'DIFFICULTY_READY';
+
+/** GET /recommendations - one of five independent rules-based heuristics; the array can be empty. */
+export interface RecommendationCard {
+  type: RecommendationType;
+  title: string;
+  description: string;
+  attributeId?: string;
+  skillId?: string;
+  questId?: string;
+  goalId?: string;
+}
+
+/** GET /recommendations/weekly-review - a structured digest, not AI-written prose. */
+export interface WeeklyReview {
+  xpThisWeek: number;
+  xpLastWeek: number;
+  xpDelta: number;
+  questsCompleted: number;
+  habitsCompleted: number;
+  mostImprovedSkill: { id: string; name: string; xp: number } | null;
+  neglectedAttribute: { id: string; key: AttributeKey; name: string } | null;
+  currentStreak: number;
+}
+
 /** GET /admin/users, and the shape returned by most /admin/users/:id mutations - same as PublicUser. */
 export type AdminUserSummary = PublicUser;
 

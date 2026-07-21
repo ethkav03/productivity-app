@@ -7,6 +7,7 @@ import {
   History,
   Hourglass,
   LayoutDashboard,
+  Lightbulb,
   Repeat,
   Sparkles,
   Target,
@@ -22,6 +23,7 @@ export const NAV_ITEMS = [
   { href: '/journal', label: 'Journal', icon: BookOpen },
   { href: '/achievements', label: 'Achievements', icon: Award },
   { href: '/timeline', label: 'Timeline', icon: History },
+  { href: '/recommendations', label: 'Recommendations', icon: Lightbulb },
   { href: '/leaderboard', label: 'Leaderboard', icon: Crown },
   { href: '/analytics', label: 'Analytics', icon: BarChart3 },
 ] as const;

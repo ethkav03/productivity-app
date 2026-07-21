@@ -4,6 +4,21 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-21 — Recommendations and Weekly Review (frontend)
+
+Frontend slice of "Sprint 7: Intelligence," closing out the roadmap's full 7-sprint recommended
+order. New `/recommendations` page: a grid of `GET /recommendations`'s cards (an empty state for a
+brand-new user with no signal yet), each with a per-type icon and a link to the relevant
+attribute/skill/goal page where one applies. Below the cards, a "Weekly Review" card renders
+`GET /recommendations/weekly-review` - an XP-this-week-vs-last-week delta badge, quests/habits
+completed, day streak, most-improved skill, and quietest attribute, each linking onward where
+relevant. New "Recommendations" nav item.
+
+Verified via Playwright (light/dark): the empty state for a fresh account, all five recommendation
+card types rendering with correct copy once their underlying signal exists (including the
+`DIFFICULTY_READY` card's 4-vs-5-completion threshold), the momentum card's link landing on the
+right skill page, and the Weekly Review card's numbers matching what was actually earned.
+
 ## 2026-07-21 — Recommendations and Weekly Review (backend)
 
 Backend slice of "Sprint 7: Intelligence" (`docs/feature-roadmap.md`) - Phase 4 Features 20-22.
