@@ -47,7 +47,7 @@ for exact prop shapes, read the referenced files directly.
 | `/login` | `frontend/app/(auth)/login/page.tsx` | Email + password login form; on success calls `router.push('/dashboard')`. |
 | `/register` | `frontend/app/(auth)/register/page.tsx` | Email + username + password registration form; on success calls `router.push('/onboarding')`. |
 | `/onboarding` | `frontend/app/onboarding/page.tsx` | 4-step first-run wizard: pick starting skills, create a goal, add starter quests/habits. |
-| `/dashboard` | `frontend/app/(app)/dashboard/page.tsx` | Home screen: streak + level/XP header (with a "Character Build" archetype badge next to the greeting - Sprint 5, see below), a "Current Season" banner if one is active (Sprint 5, links to `/seasons`), an 8-axis "Character Shape" radar chart of attribute levels, today's habits, active quests (incl. Locked/Complete/Claim Reward states; "Active Quests" card title links to `/quests`), active goals, recent achievements, activity feed. |
+| `/dashboard` | `frontend/app/(app)/dashboard/page.tsx` | Home screen: streak + level/XP header (with a "Character Build" archetype badge next to the greeting - Sprint 5, see below), a "Current Season" banner if one is active (Sprint 5, links to `/seasons`), an 8-axis "Character Shape" radar chart of attribute levels, today's habits, active quests (incl. Locked/Complete/Claim Reward states; "Active Quests" card title links to `/quests`), active goals, a "Daily Capacity" widget (Sprint 6, see below), recent achievements, activity feed. |
 | `/skills` | `frontend/app/(app)/skills/page.tsx` | Skills grouped by the 8 fixed attributes, with progress bars (each attribute's header links to `/attributes/[id]`) and a tier badge per skill (Sprint 5, see below); add-skill modal (suggested or custom) and delete. |
 | `/skills/[id]` | `frontend/app/(app)/skills/[id]/page.tsx` | Single skill detail: rename/edit description, a "What contributes to this skill?" list of quests/habits/goals currently tagged with it (client-side filter over `GET /quests`/`GET /habits`/`GET /goals`, no dedicated endpoint), cumulative XP growth chart, recent XP transaction list, delete. The "Part of {attribute}" line links to `/attributes/[id]`. |
 | `/attributes/[id]` | `frontend/app/(app)/attributes/[id]/page.tsx` | Single attribute detail (new, Sprint 3 Feature 7): level/XP header, nested skills grid, an "Unlocked Rewards" section (`LevelReward`s scoped to this attribute, from `GET /level-rewards` + `GET /level-rewards/unlocked`, filtered client-side by `attributeKey`), cumulative XP growth chart, recent XP transaction list. Read-only - attributes have no edit/delete. |
@@ -56,7 +56,9 @@ for exact prop shapes, read the referenced files directly.
 | `/goals` | `frontend/app/(app)/goals/page.tsx` | Active/Completed goal tabs, create-goal modal (incl. a Season picker mirroring the quest/habit modals' Goal pickers - Sprint 5, `RewardBundleEditor`). |
 | `/goals/[id]` | `frontend/app/(app)/goals/[id]/page.tsx` | Single goal detail: a Milestones card (ordered checklist with an inline add-form, per-item complete/undo/delete - Sprint 4), linked quests, linked habits (Sprint 4), a log-progress form (binary mark-complete, numeric value entry, or - for `COMPLETION`-type goals - a read-only note, since progress now syncs automatically from linked quest completions), delete. |
 | `/seasons` | `frontend/app/(app)/seasons/page.tsx` | New route (Sprint 5, "Seasons and Chapters"): a "Current Season" card (focus attribute badges, live character/attribute level deltas since the season started, a "Close Season" action) or an empty state if none is active; a "Past Seasons" grid below showing each closed season's frozen deltas; a "Start New Season" modal (title, description, a `PillSelect` of the 8 attributes as focus, optional planned end date) - starting one while another is active shows a native `confirm()` warning that it'll close the current one first, matching the backend's auto-close behavior. |
+| `/journal` | `frontend/app/(app)/journal/page.tsx` | New route (Sprint 6, "Daily Journal"): a day editor with prev/next-day navigation (capped at today), the day's "activities completed"/"XP earned" summary (`GET /journal`), 1-5 pill pickers for mood/energy/stress, a sleep-hours input, and a note textarea, saved via `PUT /journal/:date`. Below that, a "how mood and sleep line up with your progress" card rendering `GET /journal/correlations`'s two fixed comparisons (each omitted until enough logged days exist on both sides, per the backend's `CORRELATION_MIN_SAMPLE`). |
 | `/achievements` | `frontend/app/(app)/achievements/page.tsx` | An inline pill-toggle between two tabs (same pattern as the Quests page's status tabs): "Achievements" (all achievement definitions split into Unlocked / Locked, with a per-type requirement description) and "Level Rewards" (Sprint 3 Feature 6 - same Unlocked/Locked treatment for `LevelReward`s, requirement text resolved via `GET /attributes` for attribute-scoped rewards' display names). |
+| `/timeline` | `frontend/app/(app)/timeline/page.tsx` | New route (Sprint 6, "Life Timeline"): `GET /analytics/timeline`'s merged event feed, grouped under a day heading per calendar date, each event rendered as a row with a per-type icon (Trophy/Gift/Target/Hourglass/Swords/BookOpen/Sparkles) and a matching `Badge` label (Achievement/Level Reward/Goal Completed/Season Closed/Epic Quest/Memory/Level Up). |
 | `/leaderboard` | `frontend/app/(app)/leaderboard/page.tsx` | Ranks the caller against their accepted friends: metric tabs (Overall Level / Attribute / XP Earned). Attribute mode filters via a `role="radiogroup"` of icon-only circles per attribute (categorical color, matching `AttributeDots`/Skills page), the selected one expanding into an icon+name pill; XP mode filters via a period pill row. Below that: a top-3 podium (graceful with fewer than 3 entries), a 4th-onward ranked list, and a "Manage Friends" modal (send/accept/decline/remove, plus a "Suggested Friends" section) with an unread-incoming-request badge. |
 | `/analytics` | `frontend/app/(app)/analytics/page.tsx` | Overview stat tiles, attribute progression grid, XP-over-time area chart, skill-level bar chart, activity heatmap, recent activity feed (with a "Full history" link to the page below). |
 | `/analytics/history` | `frontend/app/(app)/analytics/history/page.tsx` | Every XP event, grouped (character/skill/attribute lines per event via `GET /analytics/xp-history`), filterable by source category, grouped by calendar day, with cursor-based "Load more" (`useInfiniteQuery`). |
@@ -331,6 +333,21 @@ notes in `docs/feature-roadmap.md` § "Feature 9"/"Feature 10" for why this scop
   cards, the skill detail page's header, and the attribute detail page's nested skill list - as an
   additional `outline`-variant `Badge` next to the existing "Lvl N" badge.
 
+## Daily Capacity widget (Sprint 6)
+
+The `/dashboard` sidebar renders a "Daily Capacity" card fed by `GET /journal/capacity`
+(`getJournalCapacity`, `frontend/src/lib/api/journal.ts`). Three states, matching the backend's own
+honest-scoping choice (see `docs/gameplay-systems.md` § "Daily Capacity (Feature 15)"):
+
+- `score === null` (no logged mood/energy in the lookback window) - a "Log your mood and energy to
+  see your daily capacity" message with a link to `/journal`, never a fabricated number.
+- `score` present - a circular score badge plus a High (≥75, `success`) / Moderate (≥45, `warning`)
+  / Low (`danger`) `Badge`, and "Based on the last N days." The whole card links to `/journal`.
+
+The label thresholds (`capacityLabel`/`capacityBadgeVariant` in `dashboard/page.tsx`) are a purely
+presentational bucketing of the backend's 0-100 score - the backend itself makes no High/Moderate/
+Low judgment, it only returns the number.
+
 ## Layout/navigation components
 
 All under `frontend/src/components/layout/`.
@@ -377,7 +394,9 @@ A single shared `NAV_ITEMS` array consumed by both `Sidebar` and `MobileNav`:
 | Habits | `/habits` | `Repeat` |
 | Goals | `/goals` | `Target` |
 | Seasons | `/seasons` | `Hourglass` |
+| Journal | `/journal` | `BookOpen` |
 | Achievements | `/achievements` | `Award` |
+| Timeline | `/timeline` | `History` |
 | Leaderboard | `/leaderboard` | `Crown` |
 | Analytics | `/analytics` | `BarChart3` |
 

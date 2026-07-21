@@ -504,6 +504,62 @@ export interface LeaderboardEntry {
   characterLevel: number;
 }
 
+export interface JournalEntry {
+  id: string;
+  userId: string;
+  date: string;
+  mood: number | null;
+  energyLevel: number | null;
+  sleepHours: number | null;
+  stressLevel: number | null;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** GET /journal (?date=) - the entry for that day, plus what was completed that day, derived live from the XP ledger. */
+export interface JournalDaySummary {
+  entry: JournalEntry | null;
+  activitiesCompleted: number;
+  xpEarned: number;
+}
+
+/** GET /journal/capacity - null score until the user has logged at least one of the last few days. */
+export interface JournalCapacity {
+  score: number | null;
+  daysConsidered: number;
+}
+
+export interface JournalCorrelationGroup {
+  higherGroupAverageXp: number;
+  lowerGroupAverageXp: number;
+  higherGroupDays: number;
+  lowerGroupDays: number;
+}
+
+/** GET /journal/correlations - each comparison is null until there are enough logged days on both sides. */
+export interface JournalCorrelations {
+  moodVsXp: JournalCorrelationGroup | null;
+  sleepVsXp: JournalCorrelationGroup | null;
+}
+
+export type TimelineEventType =
+  | 'ACHIEVEMENT'
+  | 'LEVEL_REWARD'
+  | 'GOAL_COMPLETED'
+  | 'SEASON_CLOSED'
+  | 'NOTABLE_QUEST'
+  | 'MEMORY'
+  | 'LEVEL_UP';
+
+/** GET /analytics/timeline - one merged, chronologically sorted feed entry. */
+export interface TimelineEvent {
+  type: TimelineEventType;
+  date: string;
+  title: string;
+  description: string | null;
+}
+
 /** GET /admin/users, and the shape returned by most /admin/users/:id mutations - same as PublicUser. */
 export type AdminUserSummary = PublicUser;
 

@@ -21,6 +21,7 @@ import { claimQuestReward, completeQuest, getQuests } from '@/lib/api/quests';
 import { getGoals } from '@/lib/api/goals';
 import { getUnlockedAchievements } from '@/lib/api/achievements';
 import { getAnalyticsAttributes, getAnalyticsFeed } from '@/lib/api/analytics';
+import { getJournalCapacity } from '@/lib/api/journal';
 import { getSeasons } from '@/lib/api/seasons';
 import { attributeColor } from '@/lib/attribute-colors';
 import { computeArchetype } from '@/lib/character-archetype';
@@ -37,6 +38,18 @@ function greetingForHour(hour: number) {
   if (hour < 12) return 'Good morning';
   if (hour < 18) return 'Good afternoon';
   return 'Good evening';
+}
+
+function capacityLabel(score: number) {
+  if (score >= 75) return 'High';
+  if (score >= 45) return 'Moderate';
+  return 'Low';
+}
+
+function capacityBadgeVariant(score: number): 'success' | 'warning' | 'danger' {
+  if (score >= 75) return 'success';
+  if (score >= 45) return 'warning';
+  return 'danger';
 }
 
 export default function DashboardPage() {
@@ -65,6 +78,7 @@ export default function DashboardPage() {
   // Same queryKey as AttributeRadarSection's own fetch below - TanStack Query
   // dedupes both into a single request.
   const attributesQuery = useQuery({ queryKey: ['analytics', 'attributes'], queryFn: getAnalyticsAttributes });
+  const capacityQuery = useQuery({ queryKey: ['journal', 'capacity'], queryFn: getJournalCapacity });
 
   async function handleCompletionSuccess(result: CompletionResult) {
     queryClient.invalidateQueries({ queryKey: ['habits'] });
@@ -268,6 +282,42 @@ export default function DashboardPage() {
         </div>
 
         <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Daily Capacity</CardTitle>
+            </CardHeader>
+            {capacityQuery.isLoading ? (
+              <Spinner />
+            ) : capacityQuery.data?.score == null ? (
+              <div className="text-center">
+                <p className="text-sm text-muted">Log your mood and energy to see your daily capacity.</p>
+                <Link href="/journal" className="mt-3 inline-block">
+                  <Button size="sm" variant="outline">
+                    Open Journal
+                  </Button>
+                </Link>
+              </div>
+            ) : (
+              <Link
+                href="/journal"
+                className="-m-1 flex items-center gap-3 rounded-xl p-1 transition-colors hover:bg-surface-hover"
+              >
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary/15 text-lg font-bold text-primary">
+                  {capacityQuery.data.score}
+                </div>
+                <div>
+                  <Badge variant={capacityBadgeVariant(capacityQuery.data.score)}>
+                    {capacityLabel(capacityQuery.data.score)}
+                  </Badge>
+                  <p className="mt-1 text-xs text-muted">
+                    Based on the last {capacityQuery.data.daysConsidered} day
+                    {capacityQuery.data.daysConsidered === 1 ? '' : 's'}
+                  </p>
+                </div>
+              </Link>
+            )}
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>Active Goals</CardTitle>

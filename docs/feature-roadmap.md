@@ -367,12 +367,11 @@ git branch (`feature/level-gated-quests`, `feature/quest-board`,
 Sprint 3, the workflow moved to committing directly to `master` (the branch-per-feature pattern
 was explicitly reverted). Sprint 3 ("Meaningful Progression"), Sprint 4 ("Better Goals"), and
 Sprint 5 ("RPG Identity": character builds, specialisations, skill trees, character identity,
-seasonal progression, chapters) are all complete, each landed as two commits (backend slice, then
-frontend slice) straight to `master`. Feature 14 ("Identity System") within Sprint 5's own scope
-was deliberately deferred - see the note below. Sprint 6 ("Self-Improvement Layer": daily energy,
-recovery, daily journal, mood tracking, correlation analytics, life timeline) is in progress - its
-backend slice (`JournalEntry`, Daily Capacity, correlations, Life Timeline) is done; Feature 16
-("Recovery System") within its own scope was deliberately not built - see the note below.
+seasonal progression, chapters), and Sprint 6 ("Self-Improvement Layer": daily energy, recovery,
+daily journal, mood tracking, correlation analytics, life timeline) are all complete, each landed
+as two commits (backend slice, then frontend slice) straight to `master`. Feature 14 ("Identity
+System") within Sprint 5's own scope, and Feature 16 ("Recovery System") within Sprint 6's own
+scope, were each deliberately not built - see the notes below.
 
 | Item | Status |
 | --- | --- |
@@ -394,11 +393,11 @@ backend slice (`JournalEntry`, Daily Capacity, correlations, Life Timeline) is d
 | 12 — Unlockable Content | Not yet built - not part of Sprint 5's scope (the roadmap's own 7-sprint list doesn't slot this feature into any specific sprint). |
 | 13 — Seasons and Chapters | **Done** (Sprint 5 "RPG Identity", committed straight to `master`, closing out the sprint). New `Season` model - a named chapter with a focus of 1+ attributes, snapshotting level/attribute levels at start and close so progress deltas stay meaningful once closed; at most one `ACTIVE` season per user, enforced in `SeasonsService`. `Goal.seasonId` mirrors the pre-existing `Quest.goalId`/`Habit.goalId` pattern. Frontend: a new `/seasons` page (current season + history + a start-season modal), a current-season banner on `/dashboard`, and a season picker in the goal creation modal. See `gameplay-systems.md` § "Seasons and Chapters (Feature 13)". |
 | 14 — Identity System | Deliberately deferred - see the note below. |
-| 15 — Daily Energy / Capacity | **Backend done, light version** (Sprint 6 "Self-Improvement Layer", committed straight to `master`). `GET /journal/capacity` averages the last 3 days' logged mood/energy into a 0-100 score - no new model, no scheduler, and deliberately not weighted by the roadmap's full "sleep, workload, training, stress, recovery, momentum" formula (no real usage data to calibrate weights against). Never gates anything - informational only, per the roadmap's own framing. See the deliberate-deviation note below. |
+| 15 — Daily Energy / Capacity | **Done, light version** (Sprint 6 "Self-Improvement Layer", committed straight to `master`). `GET /journal/capacity` averages the last 3 days' logged mood/energy into a 0-100 score - no new model, no scheduler, and deliberately not weighted by the roadmap's full "sleep, workload, training, stress, recovery, momentum" formula (no real usage data to calibrate weights against). Never gates anything - informational only, per the roadmap's own framing. Frontend: a "Daily Capacity" widget on `/dashboard` (score + High/Moderate/Low badge, or a "log your mood" prompt if there's no data yet). See the deliberate-deviation note below. |
 | 16 — Recovery System | Deliberately not built - see the note below. |
-| 17 — Daily Journal | **Backend done** (Sprint 6). New `JournalEntry` model - one optional-fields row per user per day (mood, energy, sleep, stress, free-text note). "Activities completed and XP earned that day" is computed live from the XP ledger, never duplicated onto the entry. `PUT /journal/:date` upserts; `GET /journal/history` lists recent days. Frontend not yet built. |
-| 18 — Mood and Energy Tracking | **Backend done** (Sprint 6). `GET /journal/correlations` - two fixed comparisons (average XP on higher- vs lower-mood days, and more- vs less-sleep days), each withheld unless there are at least 3 days of data on both sides. Framed as observations, not medical claims, per the roadmap's own explicit caution. |
-| 19 — Life Timeline | **Backend done** (Sprint 6). New `GET /analytics/timeline` merges achievement unlocks, level-reward unlocks, goal completions, season closures, notable (`EPIC`/`LEGENDARY`) quest completions, journal notes ("memories"), and reconstructed character level-ups into one chronological feed - genuinely new, not a duplicate of the existing `/analytics/feed`/`xp-history` raw-ledger views. Attribute-level level-ups are deliberately excluded - see the note below. |
+| 17 — Daily Journal | **Done** (Sprint 6). New `JournalEntry` model - one optional-fields row per user per day (mood, energy, sleep, stress, free-text note). "Activities completed and XP earned that day" is computed live from the XP ledger, never duplicated onto the entry. `PUT /journal/:date` upserts; `GET /journal/history` lists recent days. Frontend: a new `/journal` page - a prev/next-day editor with 1-5 rating pickers, sleep hours, and a note, plus the live day summary. |
+| 18 — Mood and Energy Tracking | **Done** (Sprint 6). `GET /journal/correlations` - two fixed comparisons (average XP on higher- vs lower-mood days, and more- vs less-sleep days), each withheld unless there are at least 3 days of data on both sides. Framed as observations, not medical claims, per the roadmap's own explicit caution. Frontend: rendered as two comparison cards on `/journal`, below the day editor. |
+| 19 — Life Timeline | **Done** (Sprint 6). New `GET /analytics/timeline` merges achievement unlocks, level-reward unlocks, goal completions, season closures, notable (`EPIC`/`LEGENDARY`) quest completions, journal notes ("memories"), and reconstructed character level-ups into one chronological feed - genuinely new, not a duplicate of the existing `/analytics/feed`/`xp-history` raw-ledger views. Attribute-level level-ups are deliberately excluded - see the note below. Frontend: a new `/timeline` page, events grouped by day with a per-type icon and badge. |
 | Everything in Phases 2-4 | Not yet built - out of scope for Sprint 2. |
 
 **Deliberate deviation:** `eventId` was added as a real schema column (not in the original

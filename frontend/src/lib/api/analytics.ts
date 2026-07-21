@@ -5,6 +5,7 @@ import {
   AnalyticsOverview,
   AnalyticsSkillProgress,
   AnalyticsXpPoint,
+  TimelineEvent,
   XPSourceType,
   XpHistoryEvent,
   XPTransaction,
@@ -49,5 +50,10 @@ export interface XpHistoryParams {
 
 export async function getXpHistory(params: XpHistoryParams = {}) {
   const { data } = await apiClient.get<XpHistoryEvent[]>('/analytics/xp-history', { params });
+  return data;
+}
+
+export async function getAnalyticsTimeline(limit = 50) {
+  const { data } = await apiClient.get<TimelineEvent[]>('/analytics/timeline', { params: { limit } });
   return data;
 }

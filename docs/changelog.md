@@ -4,6 +4,31 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-21 — Daily Journal, Capacity, Correlations, and Life Timeline (frontend)
+
+Frontend slice of "Sprint 6: Self-Improvement Layer," closing it out. Three new pieces, all
+consuming the endpoints from the backend slice below with no new endpoints of their own:
+
+New `/journal` page - a prev/next-day editor (capped at today) with the day's "activities
+completed"/"XP earned" summary, 1-5 pill pickers for mood/energy/stress, a sleep-hours input, and a
+note textarea, saved via `PUT /journal/:date`. Below the editor, a "how mood and sleep line up with
+your progress" card renders `GET /journal/correlations`'s two comparisons, each shown only once the
+backend has enough data on both sides.
+
+New "Daily Capacity" widget on `/dashboard` - a score badge with a High/Moderate/Low label bucketed
+client-side from `GET /journal/capacity`'s 0-100 number, or a "log your mood and energy" prompt
+linking to `/journal` when there's no data yet - mirroring the backend's own null-vs-fabricated-
+number distinction.
+
+New `/timeline` page rendering `GET /analytics/timeline`'s merged event feed, grouped under a day
+heading per calendar date, each event with a per-type icon and `Badge` (Achievement/Level
+Reward/Goal Completed/Season Closed/Epic Quest/Memory/Level Up).
+
+Added "Journal" and "Timeline" nav items. Verified via Playwright (light/dark): the day editor's
+save/reload round-trip, the day summary updating after earning XP, the capacity widget's null vs.
+scored states, the correlation cards appearing once enough backdated data exists, and the timeline
+showing Memory/Epic Quest/Level Up events in the right order.
+
 ## 2026-07-21 — Settings moved into the account menu
 
 A direct, standalone request mid-session: moved the "Settings" link out of the main sidebar nav
