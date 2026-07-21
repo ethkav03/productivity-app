@@ -367,11 +367,15 @@ git branch (`feature/level-gated-quests`, `feature/quest-board`,
 Sprint 3, the workflow moved to committing directly to `master` (the branch-per-feature pattern
 was explicitly reverted). Sprint 3 ("Meaningful Progression"), Sprint 4 ("Better Goals"), and
 Sprint 5 ("RPG Identity": character builds, specialisations, skill trees, character identity,
-seasonal progression, chapters), and Sprint 6 ("Self-Improvement Layer": daily energy, recovery,
-daily journal, mood tracking, correlation analytics, life timeline) are all complete, each landed
-as two commits (backend slice, then frontend slice) straight to `master`. Feature 14 ("Identity
-System") within Sprint 5's own scope, and Feature 16 ("Recovery System") within Sprint 6's own
-scope, were each deliberately not built - see the notes below.
+seasonal progression, chapters), Sprint 6 ("Self-Improvement Layer": daily energy, recovery, daily
+journal, mood tracking, correlation analytics, life timeline), and Sprint 7 ("Intelligence":
+personalised recommendations, adaptive difficulty, AI-generated quests, AI weekly reviews, an AI
+Game Master) are all complete, each landed as two commits (backend slice, then frontend slice)
+straight to `master`. Feature 14 ("Identity System") within Sprint 5's own scope, and Feature 16
+("Recovery System") within Sprint 6's own scope, were each deliberately not built. Sprint 7 was
+explicitly scoped to rules-based heuristics with no LLM/AI integration, per the user's own choice
+when asked - see the notes below, and `docs/gameplay-systems.md` § "Recommendations and Weekly
+Review (Sprint 7)".
 
 | Item | Status |
 | --- | --- |
@@ -398,7 +402,9 @@ scope, were each deliberately not built - see the notes below.
 | 17 — Daily Journal | **Done** (Sprint 6). New `JournalEntry` model - one optional-fields row per user per day (mood, energy, sleep, stress, free-text note). "Activities completed and XP earned that day" is computed live from the XP ledger, never duplicated onto the entry. `PUT /journal/:date` upserts; `GET /journal/history` lists recent days. Frontend: a new `/journal` page - a prev/next-day editor with 1-5 rating pickers, sleep hours, and a note, plus the live day summary. |
 | 18 — Mood and Energy Tracking | **Done** (Sprint 6). `GET /journal/correlations` - two fixed comparisons (average XP on higher- vs lower-mood days, and more- vs less-sleep days), each withheld unless there are at least 3 days of data on both sides. Framed as observations, not medical claims, per the roadmap's own explicit caution. Frontend: rendered as two comparison cards on `/journal`, below the day editor. |
 | 19 — Life Timeline | **Done** (Sprint 6). New `GET /analytics/timeline` merges achievement unlocks, level-reward unlocks, goal completions, season closures, notable (`EPIC`/`LEGENDARY`) quest completions, journal notes ("memories"), and reconstructed character level-ups into one chronological feed - genuinely new, not a duplicate of the existing `/analytics/feed`/`xp-history` raw-ledger views. Attribute-level level-ups are deliberately excluded - see the note below. Frontend: a new `/timeline` page, events grouped by day with a per-type icon and badge. |
-| Everything in Phases 2-4 | Not yet built - out of scope for Sprint 2. |
+| 20 — Personalised Recommendations | **Done, rules-based** (Sprint 7 "Intelligence", committed straight to `master`). New `GET /recommendations` runs five independent fixed heuristics (neglected attribute, weekly momentum, deadline approaching, stale goal, "ready for a challenge") and returns whichever produced a real signal - no LLM, no scoring model across heuristics. See the deliberate-deviation note below. |
+| 21 — Adaptive Difficulty | **Done, one-sided** (Sprint 7). The "recommend harder quests after repeated easy success" half is built (`DIFFICULTY_READY` - the caller's last 5 claimed completions were all Easy/Medium). The "recommend easier ones after repeated failure" half is not - there's no failure/abandon signal anywhere in the data model to build it from honestly. See the deliberate-deviation note below. |
+| 22 — AI Game Master | **Narrowed to Weekly Review** (Sprint 7). New `GET /recommendations/weekly-review` assembles a structured digest (XP this/last week, quests/habits completed, top skill, neglected attribute, streak) from data that already exists elsewhere - not AI-written prose. Quest generation, automatic difficulty adjustment, pattern detection, and seasonal narratives are not built. See the deliberate-deviation note below. |
 
 **Deliberate deviation:** `eventId` was added as a real schema column (not in the original
 Feature 0.2 sketch, which implied `targetType`/`targetId`/`sourceType`/`sourceId` would be
@@ -567,3 +573,43 @@ already partially surfaced today via `Achievement`'s `ATTRIBUTE_LEVEL_REACHED` r
 whichever ones a seeded achievement happens to target (e.g. "Getting Physical" at Physical Level
 2). A full per-attribute timeline reconstruction is a reasonable future addition once there's
 demand for it, not a gap worth the cost for this first pass.
+
+**Deliberate deviation (Sprint 7, all of Phase 4):** Every Phase 4 feature explicitly names AI/LLM
+behavior - "the system analyses ... and recommends" (20), "AI could sit on top of the existing
+structured systems - analysing progress, generating quests" (22). This codebase has no LLM
+integration anywhere, and wiring one up is a real infrastructure/cost decision (an API key,
+ongoing per-call cost) rather than a code judgment call - the user was asked directly how to
+approach Sprint 7 and chose a rules-based-heuristics-only path, no real LLM calls. Everything below
+follows from that choice, not from a unilateral scope cut.
+
+**Deliberate deviation:** Feature 20's proposal analyses "current goals, recent activities, skill
+progression, XP distribution, energy, momentum, and unfinished quests" through one implied
+synthesis step. What's built instead is five *independent* fixed heuristics
+(`RecommendationsService.getRecommendations`), each returning nothing when its own signal isn't
+real rather than all five being forced through a shared scoring/ranking model - inventing relative
+weights across heuristics with no usage data to calibrate them against is the same trap Feature
+15's Daily Capacity explicitly avoided (see that note above). See `docs/gameplay-systems.md`
+§ "Recommendations and Weekly Review (Sprint 7)" for what each of the five heuristics is and why.
+
+**Deliberate deviation:** Feature 21 is built one-sided. "If the user constantly completes quests
+easily, recommend increasing difficulty" is built (`DIFFICULTY_READY` - the last 5 claimed
+completions were all Easy/Medium). "If they repeatedly fail, recommend reducing the target" is
+not: this app has no failure/abandon signal anywhere in the data model. Deleting a quest
+(`QuestsService.remove`) is indistinguishable from never having created one, and
+`QuestStatus.ARCHIVED` is defined in the schema but no code path ever sets it. Treating old
+still-`ACTIVE` quests as implicit failures would conflate "gave up" with "still working on it
+slowly" - exactly the kind of dishonest inference this codebase has avoided everywhere else (e.g.
+`score: null` rather than a guessed number when Daily Capacity has no data). Building the failure
+half honestly would require adding real failure/abandonment tracking first (e.g. an explicit
+"archive" action, or an expiry rule for `DEADLINE` quests) - a larger change than "adaptive
+difficulty" itself, and out of scope for this pass.
+
+**Deliberate deviation:** Feature 22 ("AI Game Master") is narrowed to `GET /recommendations/
+weekly-review` - a structured digest of numbers that already exist elsewhere individually (XP this
+week vs. last week, quests/habits completed, top skill, neglected attribute, streak), not
+natural-language generation. None of "analysing progress, generating quests, adjusting difficulty,
+creating weekly reviews [as prose], identifying neglected attributes [as narrative], suggesting
+goals, detecting patterns, and creating seasonal narratives" beyond that one structured digest is
+built - all of it either requires actual LLM synthesis (explicitly out of scope per the note
+above) or, for "identifying neglected attributes," is already covered by the `NEGLECTED_ATTRIBUTE`
+recommendation card and Quest Board/Challenges' existing use of the same heuristic.

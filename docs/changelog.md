@@ -4,6 +4,32 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-21 — Recommendations and Weekly Review (backend)
+
+Backend slice of "Sprint 7: Intelligence" (`docs/feature-roadmap.md`) - Phase 4 Features 20-22.
+Before starting, the user was asked directly how to approach an "Intelligence" sprint given every
+prior sprint's docs had flagged Phase 4 as needing actual AI/LLM behavior (a real infrastructure/
+cost decision, not a code judgment call) - they chose rules-based heuristics only, no LLM calls.
+Seventh sprint committing straight to `master`.
+
+New `RecommendationsModule`. `GET /recommendations` runs five independent, fixed heuristics in
+parallel and returns whichever produced a real signal (never padded to a fixed length - a
+brand-new user can get an empty array): a neglected-attribute nudge (reusing the existing
+`findNeglectedAttribute` heuristic shared with Quest Board/Challenges, gated stricter here at
+exactly 0 XP this week), a "you're on a roll" momentum card for the week's top skill, an
+approaching-deadline nudge, a stale-goal nudge (an `ACTIVE` goal untouched for 14+ days), and
+"Adaptive Difficulty" (Feature 21) built one-sided - a "ready for a challenge?" nudge when the last
+5 claimed completions were all Easy/Medium. The inverse ("reduce the target after repeated
+failure") isn't built: there's no failure/abandon signal anywhere in the data model to build it
+from honestly (deleting a quest is indistinguishable from never creating one, and
+`QuestStatus.ARCHIVED` is defined but never actually set).
+
+New `GET /recommendations/weekly-review` narrows "AI Game Master" (Feature 22) to the one piece
+buildable without an LLM: a structured digest (XP this week vs. last week, quests/habits
+completed, top skill, neglected attribute, current streak) assembled from data that already exists
+elsewhere - not AI-written prose. Quest generation, automatic difficulty adjustment, pattern
+detection, and seasonal narratives are not built.
+
 ## 2026-07-21 — Daily Journal, Capacity, Correlations, and Life Timeline (frontend)
 
 Frontend slice of "Sprint 6: Self-Improvement Layer," closing it out. Three new pieces, all

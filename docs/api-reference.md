@@ -1560,6 +1560,64 @@ Response: `200 OK`:
 
 ---
 
+## Recommendations (`/recommendations`)
+
+"Personalised Recommendations" (Sprint 7, Feature 20) and "Adaptive Difficulty" (Feature 21), built
+as five independent, fixed rules-based heuristics rather than an LLM - there is no AI/LLM
+integration anywhere in this app, matching every prior deliberate-deviation note about Phase 4. All
+routes require a Bearer token. See `docs/gameplay-systems.md` § "Recommendations and Weekly Review
+(Sprint 7)" for the full design and why each heuristic is scoped the way it is.
+
+### `GET /recommendations`
+
+Returns whichever of five recommendation cards currently apply - each heuristic independently
+returns nothing when its own signal isn't strong enough, so the array can be empty (e.g. a
+brand-new user with no skills yet) and is never padded to a fixed length.
+
+Response: `200 OK`:
+
+```ts
+Array<{
+  type: 'NEGLECTED_ATTRIBUTE' | 'MOMENTUM' | 'DEADLINE_SOON' | 'STALE_GOAL' | 'DIFFICULTY_READY';
+  title: string;
+  description: string;
+  attributeId?: string;
+  skillId?: string;
+  questId?: string;
+  goalId?: string;
+}>
+```
+
+| Type | Fires when | Carries |
+| --- | --- | --- |
+| `NEGLECTED_ATTRIBUTE` | An attribute with at least one skill has earned exactly 0 XP in the trailing 7 days (reuses `findNeglectedAttribute`, shared with Quest Board/Challenges). | `attributeId`, `skillId` |
+| `MOMENTUM` | A skill has earned XP this week - the single highest-XP skill of the week. | `skillId` |
+| `DEADLINE_SOON` | An `ACTIVE` quest's `deadline` falls within the next 48 hours. | `questId` |
+| `STALE_GOAL` | An `ACTIVE` goal's `updatedAt` is more than 14 days old. | `goalId` |
+| `DIFFICULTY_READY` | The caller's 5 most recent claimed quest completions were all `EASY`/`MEDIUM` difficulty. | - |
+
+### `GET /recommendations/weekly-review`
+
+A structured weekly digest ("AI Game Master," Feature 22, narrowed to its one honestly-buildable
+piece without an LLM - a data digest, not AI-written prose).
+
+Response: `200 OK`:
+
+```ts
+{
+  xpThisWeek: number;
+  xpLastWeek: number;
+  xpDelta: number; // xpThisWeek - xpLastWeek
+  questsCompleted: number;
+  habitsCompleted: number;
+  mostImprovedSkill: { id: string; name: string; xp: number } | null;
+  neglectedAttribute: { id: string; key: AttributeKey; name: string } | null;
+  currentStreak: number;
+}
+```
+
+---
+
 ## Friends (`/friends`)
 
 Friend-request graph backing the leaderboard's comparison group. All routes require a Bearer

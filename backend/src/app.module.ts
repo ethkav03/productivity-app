@@ -21,6 +21,7 @@ import { SeasonsModule } from './seasons/seasons.module';
 import { JournalModule } from './journal/journal.module';
 import { ChallengesModule } from './challenges/challenges.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { RecommendationsModule } from './recommendations/recommendations.module';
 import { FriendsModule } from './friends/friends.module';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { AdminModule } from './admin/admin.module';
@@ -47,6 +48,7 @@ import { AdminModule } from './admin/admin.module';
     JournalModule,
     ChallengesModule,
     AnalyticsModule,
+    RecommendationsModule,
     FriendsModule,
     LeaderboardModule,
     AdminModule,

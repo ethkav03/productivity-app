@@ -3,8 +3,9 @@
 This is a deep-dive reference for Life RPG's core game-mechanic logic: the XP ledger, the
 leveling formula, the completion workflow, duplicate-completion safety, the achievement engine,
 the friends/leaderboard social layer, level-up rewards, goal milestones/quest-linked
-auto-progress, seasons/chapters, and the daily journal/capacity/correlations/life timeline layer.
-It documents the current backend implementation as of this writing, not an aspirational design.
+auto-progress, seasons/chapters, the daily journal/capacity/correlations/life timeline layer, and
+the rules-based recommendations/weekly review layer. It documents the current backend
+implementation as of this writing, not an aspirational design.
 If you change any of the mechanics described here, update this file in the same change (see the
 closing note at the bottom).
 
@@ -1207,7 +1208,78 @@ five other event types; attribute-level milestones are already partially surface
 `Achievement`'s `ATTRIBUTE_LEVEL_REACHED` type (section 10) for the ones a seeded achievement
 happens to target.
 
-## 17. Keep this file in sync
+## 17. Recommendations and Weekly Review (Sprint 7)
+
+Sprint 7 ("Intelligence") is the roadmap's Phase 4 - personalised recommendations, adaptive
+difficulty, AI-generated quests, AI weekly reviews, an AI Game Master. Every one of those
+explicitly names AI/LLM behavior, and this codebase has no LLM integration anywhere - every
+earlier sprint's docs already flagged Phase 4 as the reason a given feature (Feature 8's goal
+decomposition, Feature 14's Identity System) was deferred. Rather than defer this sprint entirely
+or bolt on a real LLM call (a real infrastructure/cost decision, not a code judgment call - the
+user was asked and chose the heuristics-only path), `RecommendationsService`
+(`backend/src/recommendations/`) builds the same *shape* of feature - "the system looks at your
+data and tells you something useful" - as five independent, fixed, honest rules, each of which
+returns nothing rather than a forced result when its own signal isn't real.
+
+### Five independent heuristics, not a scoring engine
+
+`getRecommendations` runs five private methods in parallel and returns whichever produced a card.
+Deliberately not a unified "recommendation engine" with a shared scoring/ranking model across
+heuristics - each signal is a different shape of data (a weekly XP total, a deadline, a staleness
+window, a completion-difficulty streak) and forcing them through one scoring function would mean
+inventing relative weights with no usage data to validate them against, the same trap Feature 15's
+Daily Capacity explicitly avoided (section 16). An empty array is a valid, common response (a
+brand-new user with no skills yet gets zero cards) rather than always padding to some minimum -
+padding would mean showing a card built from noise.
+
+- **`NEGLECTED_ATTRIBUTE`** reuses `findNeglectedAttribute` (`backend/src/common/
+  neglected-attribute.ts`, already shared by Quest Board's System quests and Daily/Weekly
+  Challenges), but with a stricter gate than either of those callers: only fires when the
+  candidate attribute earned **exactly 0 XP** in the trailing 7 days, not just "the lowest of
+  eight similar numbers." Quest Board and Challenges always want *a* target to generate content
+  around, even a mild one; a recommendation card claiming something is "neglected" when it's
+  actually earned some XP this week would be a false claim.
+- **`MOMENTUM`** is the week's single highest-XP skill - positive-framing counterpart to the
+  neglected-attribute card, encouraging continuation rather than only ever nudging toward gaps.
+- **`DEADLINE_SOON`** surfaces an `ACTIVE` quest whose `deadline` falls within the next 48 hours -
+  real, already-stored data, no new tracking needed.
+- **`STALE_GOAL`** surfaces an `ACTIVE` goal whose `updatedAt` hasn't changed in over 14 days.
+  Reuses the existing `@updatedAt` column rather than adding a dedicated "last progress" timestamp
+  - `updatedAt` already bumps whenever `GoalsService.syncCompletionProgress` or a manual edit
+  touches the row, which is a close enough proxy for "hasn't moved" without new schema.
+- **`DIFFICULTY_READY`** is "Adaptive Difficulty" (Feature 21), honestly rescoped. The roadmap's
+  proposal is two-sided: recommend harder quests on repeated easy success, recommend easier ones
+  on repeated failure. Only the first half is built. The second half has no real signal to build
+  from - this app has no failure/abandon tracking anywhere: deleting a quest (`QuestsService.
+  remove`) is indistinguishable from never having created one, and `QuestStatus.ARCHIVED` is
+  defined in the schema but no code path ever sets it. Inventing a "give up" signal (e.g. treating
+  old undeleted `ACTIVE` quests as failures) would conflate "abandoned" with "still working on it
+  slowly," which is exactly the kind of dishonest inference this codebase has avoided everywhere
+  else (see Feature 15's `score: null` vs. a fabricated number, section 16). What's real: if the
+  caller's 5 most recent claimed `QuestCompletion`s were all `EASY`/`MEDIUM`, they've been
+  coasting - a directionally honest, one-sided nudge.
+
+### Weekly Review - a data digest, not AI prose
+
+`getWeeklyReview` is "AI Game Master" (Feature 22) narrowed to the one piece of it that doesn't
+require actual synthesis: a structured summary of numbers that already exist elsewhere
+individually (this week's XP vs. last week's, quests/habits completed, the week's top skill, the
+neglected attribute, the current streak), assembled into one response. It is not natural-language
+generation - there is no "you've made excellent progress this week" sentence written by anything
+resembling an AI, just numbers a frontend can phrase however it wants. `mostImprovedSkill` reuses
+the same private `topSkillOfTheWeek` helper `getRecommendations`'s `MOMENTUM` card uses, so "the
+week's top skill" means the same thing in both places rather than two queries drifting apart (the
+same shared-helper principle as `findNeglectedAttribute` itself). Unlike the `NEGLECTED_ATTRIBUTE`
+card, `neglectedAttribute` here uses `findNeglectedAttribute` **without** `requireSkill`'s
+stricter "exactly 0 XP" gate - a review should always be able to name *something* as this week's
+relatively-quietest attribute, the same reasoning Quest Board/Challenges already rely on, whereas
+a recommendation card claiming neglect should only fire when it's literally true.
+
+The rest of Feature 22 - AI-generated quests, adjusting difficulty automatically, detecting
+patterns, seasonal narratives - is not built. See the deliberate-deviation note in
+`docs/feature-roadmap.md` § "Feature 22".
+
+## 18. Keep this file in sync
 
 This file documents **why** the gameplay mechanics work the way they do, not just what the code
 currently says - the reasoning here (full XP per tagged skill/attribute, the

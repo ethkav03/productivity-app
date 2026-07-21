@@ -85,7 +85,7 @@ listed in any other module's `imports` array.
 
 | Module | Imports (from `imports: [...]`) |
 | --- | --- |
-| `AppModule` | `ConfigModule` (global), `EventEmitterModule`, `ThrottlerModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `AttributesModule`, `SkillsModule`, `XpModule`, `ProgressionModule`, `AchievementsModule`, `LevelRewardsModule`, `NotificationsModule`, `QuestsModule`, `HabitsModule`, `GoalsModule`, `SeasonsModule`, `JournalModule`, `ChallengesModule`, `AnalyticsModule`, `FriendsModule`, `LeaderboardModule`, `AdminModule` |
+| `AppModule` | `ConfigModule` (global), `EventEmitterModule`, `ThrottlerModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `AttributesModule`, `SkillsModule`, `XpModule`, `ProgressionModule`, `AchievementsModule`, `LevelRewardsModule`, `NotificationsModule`, `QuestsModule`, `HabitsModule`, `GoalsModule`, `SeasonsModule`, `JournalModule`, `ChallengesModule`, `AnalyticsModule`, `RecommendationsModule`, `FriendsModule`, `LeaderboardModule`, `AdminModule` |
 | `PrismaModule` | *(none — `@Global()`, exports `PrismaService` to every other module implicitly)* |
 | `AuthModule` | `PassportModule`, `JwtModule.register({})`, `AttributesModule` |
 | `UsersModule` | *(none)* |
@@ -103,6 +103,7 @@ listed in any other module's `imports` array.
 | `JournalModule` | *(none)* |
 | `ChallengesModule` | `ProgressionModule` |
 | `AnalyticsModule` | *(none)* |
+| `RecommendationsModule` | *(none)* |
 | `FriendsModule` | *(none)* |
 | `LeaderboardModule` | `FriendsModule` |
 | `AdminModule` | `XpModule`, `AchievementsModule`, `NotificationsModule` |
@@ -147,6 +148,7 @@ AppModule
 ├── ChallengesModule
 │   └── ProgressionModule (see above)
 ├── AnalyticsModule
+├── RecommendationsModule
 ├── FriendsModule
 ├── LeaderboardModule
 │   └── FriendsModule (see above)
@@ -821,6 +823,38 @@ Read-only aggregation over the XP ledger and related resources — no writes, no
     `calculateLevelState` on the cumulative total after each, and records the moment it crosses
     each level threshold. Scoped to the character only, not the 8 attributes too - see the
     deliberate-deviation note in `docs/feature-roadmap.md` § "Feature 19".
+- **Depended on by:** nothing (only `AppModule`).
+
+### `RecommendationsModule` (`backend/src/recommendations/`)
+
+"Personalised Recommendations" (Sprint 7, Feature 20), "Adaptive Difficulty" (Feature 21), and a
+narrowed "AI Game Master" (Feature 22) — five independent, fixed rules-based heuristics plus a
+structured weekly digest, all read-only, no `exports`. Deliberately not LLM-backed - see the
+deliberate-deviation notes in `docs/feature-roadmap.md` § "Feature 22" and
+`docs/gameplay-systems.md` § "Recommendations and Weekly Review (Sprint 7)".
+
+- **Imports:** none.
+- **Controller:** `RecommendationsController` — `GET /api/recommendations`,
+  `GET /api/recommendations/weekly-review` — both guarded.
+- **Providers:** `RecommendationsService` (not exported — no other module depends on it).
+  - `getRecommendations(userId)` — runs five independent private heuristics in parallel and
+    returns whichever produced a card (never padded to a fixed length, can be empty):
+    `neglectedAttributeCard` (reuses `findNeglectedAttribute`, requires a skill under the
+    candidate attribute and exactly 0 XP earned in it this week — a stricter gate than
+    Challenges/Quest Board's own use of the same helper, which always picks *a* candidate even if
+    none are truly idle), `momentumCard` (the week's highest-XP skill), `deadlineSoonCard` (an
+    `ACTIVE` quest with a `deadline` inside the next 48 hours), `staleGoalCard` (an `ACTIVE` goal
+    whose `updatedAt` is over 14 days old — reusing the existing timestamp rather than adding a
+    dedicated "last progress" column), and `difficultyReadyCard` (the caller's 5 most recent
+    claimed `QuestCompletion`s were all `EASY`/`MEDIUM` difficulty).
+  - `getWeeklyReview(userId)` — `xpThisWeek`/`xpLastWeek`/`xpDelta` (character-level ledger,
+    trailing two 7-day windows), `questsCompleted`/`habitsCompleted` this week,
+    `mostImprovedSkill`, `neglectedAttribute` (unfiltered - `findNeglectedAttribute` without
+    `requireSkill`'s stricter gate, since a review should always name *something*, not withhold
+    for the same "genuinely idle" bar the recommendation card uses), `currentStreak`.
+  - *(private)* `topSkillOfTheWeek(userId, weekAgo)` — shared by both `getRecommendations`'s
+    momentum card and `getWeeklyReview`'s `mostImprovedSkill`, so "the week's top skill" means the
+    same thing in both places.
 - **Depended on by:** nothing (only `AppModule`).
 
 ### `FriendsModule` (`backend/src/friends/`)
