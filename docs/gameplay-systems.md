@@ -2,10 +2,10 @@
 
 This is a deep-dive reference for Life RPG's core game-mechanic logic: the XP ledger, the
 leveling formula, the completion workflow, duplicate-completion safety, the achievement engine,
-the friends/leaderboard social layer, level-up rewards, and goal milestones/quest-linked
-auto-progress. It documents the current backend implementation as of this writing, not an
-aspirational design. If you change any of the mechanics described here, update this file in the
-same change (see the closing note at the bottom).
+the friends/leaderboard social layer, level-up rewards, goal milestones/quest-linked
+auto-progress, and seasons/chapters. It documents the current backend implementation as of this
+writing, not an aspirational design. If you change any of the mechanics described here, update
+this file in the same change (see the closing note at the bottom).
 
 Source files referenced throughout:
 
@@ -15,7 +15,7 @@ Source files referenced throughout:
 - `backend/src/level-rewards/level-rewards.service.ts`
 - `backend/src/common/leveling.ts`, `backend/src/common/period.ts`
 - `backend/src/quests/quests.service.ts`, `backend/src/habits/habits.service.ts`,
-  `backend/src/goals/goals.service.ts`
+  `backend/src/goals/goals.service.ts`, `backend/src/seasons/seasons.service.ts`
 - `backend/src/auth/auth.service.ts`, `backend/src/attributes/attributes.service.ts`,
   `backend/src/attributes/default-attributes.ts`, `backend/src/skills/default-skills.ts`
 - `backend/src/friends/friends.service.ts`, `backend/src/leaderboard/leaderboard.service.ts`,
@@ -1050,7 +1050,81 @@ reversal would mean negative `XPTransaction` rows, level recalculation, and reas
 whether an achievement/level-reward unlocked by that XP should also un-unlock - a much bigger
 feature than "let the user fix a misclick."
 
-## 15. Keep this file in sync
+## 15. Seasons and Chapters (Feature 13)
+
+Sprint 5 ("RPG Identity") targets the roadmap's own sprint grouping - "character builds,
+specialisations, skill trees, character identity, seasonal progression, chapters" - which maps to
+Features 9, 10, 13, and 14. Of these, `SeasonsService` (`backend/src/seasons/seasons.service.ts`)
+covers Feature 13 with real backend state; Features 9 and 10 are covered by two small,
+entirely frontend-computed additions (see `docs/frontend.md`), and Feature 14 is deliberately
+deferred - see the deliberate-deviation note in `docs/feature-roadmap.md` § "Feature 14" for why.
+
+### Why Feature 11 ("Titles and Perks") needed no new work
+
+Before designing Seasons, it's worth naming a gap the roadmap's sprint grouping doesn't mention:
+Feature 11, "Titles and Perks," is **already fully built** - it's exactly what Sprint 3's
+"Level-Up Rewards" shipped (section 13). The roadmap's own example titles ("The Beginner," "The
+Consistent," among others) are close matches for the seeded `title-beginner`/`title-consistent`
+`LevelReward` rows; its example perk ("Discipline Level 10 → Streak Protection") is close to the
+seeded `discipline-streak-protection` reward. Nothing in Sprint 5 touches this - it's noted here
+only so a future reader doesn't go looking for missing "Titles and Perks" work that was actually
+finished two sprints earlier under a different name.
+
+### One ACTIVE season at a time, snapshot-based deltas
+
+A `Season` (`backend/prisma/schema.prisma`) is a named chapter - a title, a focus of one or more
+`AttributeKey`s, an optional planned end date, and (once closed) a summary of what changed. The
+core design choice: **snapshot the user's level/attribute levels at creation time
+(`startLevel`/`startAttributeLevels`), and at close time (`endLevel`/`endAttributeLevels`)**,
+rather than trying to reconstruct "what was my level on date X" after the fact from the
+`XPTransaction` ledger. The ledger has no explicit "level at this point in time" column (levels
+are always recomputed from cumulative XP, never stored as a time series - a fact already noted in
+section 4), so a snapshot taken at the moment that matters is far simpler than a retroactive
+ledger query, and it's the only way a season's numbers stay meaningful and frozen once closed even
+as the user keeps earning XP in later chapters.
+
+At most one `ACTIVE` season per user, enforced in `SeasonsService`, not the database - the same
+"application-level, not schema-level" choice already made for other single-thing invariants in
+this codebase (e.g. a quest's own claimable-reward state). Starting a new season
+(`SeasonsService.create`) auto-closes whichever one is currently `ACTIVE` first, capturing *its*
+closing snapshot in the same call - matching the roadmap's own framing ("closing with a summary...
+before the next season begins"). A season can also be closed manually
+(`POST /seasons/:id/close`) without immediately starting a new one, leaving the user with no
+active season for a while if they choose - "always having a current chapter" is not enforced,
+since forcing one would work against the roadmap's own "always-current answer to what am I
+working on right now," not for it, if the honest answer is "nothing in particular, right now."
+
+### Live deltas for the active season, frozen deltas for closed ones
+
+```ts
+private serialize(season: Season, current?: { level: number; attributeLevels: AttributeLevelMap }) {
+  const isActive = season.status === 'ACTIVE';
+  const endLevel = isActive ? current!.level : season.endLevel!;
+  const endAttributeLevels = isActive ? current!.attributeLevels : season.endAttributeLevels!;
+  // attributeDeltas: one entry per season.focus key, { key, startLevel, currentLevel, delta }
+}
+```
+
+For a `COMPLETED` season, `currentLevel`/`levelDelta`/`attributeDeltas` are computed from the
+season's own frozen end snapshot - stable forever. For the one `ACTIVE` season (if any),
+`SeasonsService.findAll`/`findOne` instead fetch the user's *current* level/attribute levels
+(`currentAttributeState`) and feed those into the same `serialize` function - so "what have I done
+this season so far" is always fresh on every read, with no scheduled job or cache invalidation
+needed to keep it in sync. `findAll` only pays for that extra fetch when the result set actually
+contains an `ACTIVE` season, since most calls (viewing history) won't.
+
+### goal↔season relationships
+
+`Goal.seasonId` (nullable FK to `Season`, `onDelete: SetNull`) mirrors `Quest.goalId`/
+`Habit.goalId` field-for-field, matching the roadmap's own season example, which lists specific
+goals ("reach 90kg, improve 5K time, build Life RPG") as part of a season's definition. Same
+ownership-check pattern as always: `GoalsService` has its own private `assertOwnedSeason` rather
+than importing `SeasonsModule` (see `docs/backend.md`). A season closing does **not** touch its
+linked goals' own `status` - a chapter ending doesn't retroactively abandon goals that are still
+genuinely active; they simply stop being "this chapter's goals" in a forward-looking sense (they
+remain visible via `GET /seasons/:id`'s `goals` list, now on a `COMPLETED` season).
+
+## 16. Keep this file in sync
 
 This file documents **why** the gameplay mechanics work the way they do, not just what the code
 currently says - the reasoning here (full XP per tagged skill/attribute, the

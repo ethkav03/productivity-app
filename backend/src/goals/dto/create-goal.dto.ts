@@ -64,6 +64,11 @@ export class CreateGoalDto {
   @Min(1)
   xpReward?: number;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  seasonId?: string;
+
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
   @IsArray()

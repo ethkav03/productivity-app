@@ -754,6 +754,7 @@ Response: `200 OK`, array of `Goal`:
 {
   id: string;
   userId: string;
+  seasonId: string | null;     // Sprint 5 - "Seasons and Chapters"
   title: string;
   description: string | null;
   category: string | null;
@@ -772,6 +773,7 @@ Response: `200 OK`, array of `Goal`:
   skillRewardOverrides: Array<{ skillId: string; amount: number }>;  // "XP Bundles" - see POST /quests
   attributeBonuses: Array<{ attributeId: string; attributeName: string; amount: number }>;
   milestones: GoalMilestone[]; // ordered ascending, Sprint 4 - see the Milestones section below
+  season: { id: string; title: string } | null;  // resolved from seasonId, Sprint 5
   progressPercent: number;     // derived, 0-100, see rules below
 }
 ```
@@ -804,6 +806,7 @@ Request body (`CreateGoalDto`):
   unit?: string;               // max 20 chars
   targetDate?: string;         // @IsISO8601
   xpReward?: number;           // int, >= 1. Default 500 if omitted
+  seasonId?: string;           // @IsUUID, must be owned by the caller - Sprint 5
   skillIds?: string[];         // each @IsUUID, must be owned by the caller
   skillRewardOverrides?: Array<{ skillId: string; amount: number }>;  // "XP Bundles" - see POST /quests
   attributeBonuses?: Array<{ attributeId: string; amount: number }>;
@@ -817,8 +820,8 @@ effect, but are not returned from this endpoint.
 
 Response: `201 Created` with the new `Goal`.
 
-Errors: `404 Not Found` for an unowned `skillIds` or `attributeBonuses[].attributeId` entry; `400
-Bad Request` if `type` is `NUMERIC` or `COMPLETION` and `targetValue` is omitted, if a
+Errors: `404 Not Found` for an unowned `skillIds`, `seasonId`, or `attributeBonuses[].attributeId`
+entry; `400 Bad Request` if `type` is `NUMERIC` or `COMPLETION` and `targetValue` is omitted, if a
 `skillRewardOverrides[].skillId` isn't in `skillIds`, or if any override/bonus `amount` is not a
 positive integer.
 
@@ -846,6 +849,7 @@ Body is `UpdateGoalDto = PartialType(CreateGoalDto) & { status?: GoalStatus }`:
   unit?: string;
   targetDate?: string;
   xpReward?: number;
+  seasonId?: string | null;  // set to link, null to unlink, omit to leave unchanged - Sprint 5
   skillIds?: string[];   // if present, fully replaces the goal's skill tags
   skillRewardOverrides?: Array<{ skillId: string; amount: number }>;  // if present, fully replaces the overrides
   attributeBonuses?: Array<{ attributeId: string; amount: number }>;  // if present, fully replaces the bonuses
@@ -857,7 +861,7 @@ Body is `UpdateGoalDto = PartialType(CreateGoalDto) & { status?: GoalStatus }`:
 
 Response: `200 OK` with the updated `Goal`.
 
-Errors: `404` / `403` for the goal; `404 Not Found` for an unowned `skillIds` or
+Errors: `404` / `403` for the goal; `404 Not Found` for an unowned `skillIds`, `seasonId`, or
 `attributeBonuses[].attributeId` entry; `400 Bad Request` if a `skillRewardOverrides[].skillId`
 isn't in the goal's (possibly just-updated) `skillIds`, or if any override/bonus `amount` is not a
 positive integer.
@@ -968,6 +972,108 @@ Response: `200 OK` with `{ id: string; deleted: true }`.
 Errors: `404 Not Found`.
 
 ### `DELETE /goals/:id`
+
+Response: `200 OK` with `{ id: string; deleted: true }`.
+
+Errors: `404` / `403`.
+
+---
+
+## Seasons (`/seasons`)
+
+"Seasons and Chapters" (Sprint 5). All routes require a Bearer token. At most one `ACTIVE` season
+per user at a time, enforced in `SeasonsService` - starting a new one auto-closes whichever is
+currently active.
+
+```ts
+interface Season {
+  id: string;
+  userId: string;
+  title: string;
+  description: string | null;
+  focus: Array<'PHYSICAL' | 'INTELLIGENCE' | 'DISCIPLINE' | 'ENERGY' | 'SOCIAL' | 'WEALTH' | 'CREATIVITY' | 'WISDOM'>;
+  startDate: string;
+  endDate: string | null;
+  status: 'ACTIVE' | 'COMPLETED';
+  startLevel: number;
+  startAttributeLevels: Record<string, number>;  // snapshot at creation
+  closedAt: string | null;
+  endLevel: number | null;
+  endAttributeLevels: Record<string, number> | null;  // snapshot at close
+  createdAt: string;
+  // Derived (see below):
+  currentLevel: number;   // = endLevel for COMPLETED, live character level for ACTIVE
+  levelDelta: number;     // currentLevel - startLevel
+  attributeDeltas: Array<{ key: string; startLevel: number; currentLevel: number; delta: number }>;  // one per focus attribute
+}
+```
+
+`currentLevel`/`levelDelta`/`attributeDeltas` are always derived, never stored: for a `COMPLETED`
+season they're computed from the frozen `endLevel`/`endAttributeLevels` snapshot; for the `ACTIVE`
+season they're computed live against the user's *current* level/attribute levels on every read, so
+"what have I done this season so far" is always fresh with no scheduled job needed.
+
+### `GET /seasons`
+
+List the caller's seasons, newest first (by `startDate`).
+
+Query params:
+
+| Param | Type | Notes |
+| --- | --- | --- |
+| `status` | `SeasonStatus` | `ACTIVE` \| `COMPLETED`. Filters exactly - `?status=ACTIVE` is how the frontend finds "is there a current season". |
+
+Response: `200 OK`, array of `Season`.
+
+### `POST /seasons`
+
+Request body (`CreateSeasonDto`):
+
+```ts
+{
+  title: string;         // 2-120 chars
+  description?: string;  // max 500 chars
+  focus: AttributeKey[]; // at least 1
+  endDate?: string;      // @IsISO8601, purely descriptive - does not auto-close anything
+}
+```
+
+If the caller already has an `ACTIVE` season, it is closed first (its own `endLevel`/
+`endAttributeLevels` snapshot captured at that moment) before the new one is created.
+`startLevel`/`startAttributeLevels` are snapshotted from the caller's current state.
+
+Response: `201 Created` with the new `Season`.
+
+Errors: `400 Bad Request` if `focus` is empty or contains an invalid `AttributeKey`.
+
+### `GET /seasons/:id`
+
+Response: `200 OK` with the season shape plus `goals: Goal[]` — every goal linked to this season
+(`seasonId === id`), newest first, raw Prisma rows.
+
+Errors: `404` / `403`.
+
+### `PATCH /seasons/:id`
+
+Body is `UpdateSeasonDto = PartialType(CreateSeasonDto)` — `title`/`description`/`focus`/`endDate`,
+all optional, editable regardless of the season's status (no reason to block correcting a closed
+season's title, for example). Does not touch `status`/snapshots - use `POST /seasons/:id/close` or
+`POST /seasons` (which auto-closes) for that.
+
+Response: `200 OK` with the updated `Season`.
+
+Errors: `404` / `403`.
+
+### `POST /seasons/:id/close`
+
+Manually close the season without starting a new one - captures `endLevel`/`endAttributeLevels`
+from the caller's current state, sets `closedAt`, `status: 'COMPLETED'`.
+
+Response: `200 OK` with the updated `Season`.
+
+Errors: `404` / `403`; `400 Bad Request` — `"Season is not active"` if it's already `COMPLETED`.
+
+### `DELETE /seasons/:id`
 
 Response: `200 OK` with `{ id: string; deleted: true }`.
 

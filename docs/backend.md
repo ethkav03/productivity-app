@@ -85,7 +85,7 @@ listed in any other module's `imports` array.
 
 | Module | Imports (from `imports: [...]`) |
 | --- | --- |
-| `AppModule` | `ConfigModule` (global), `EventEmitterModule`, `ThrottlerModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `AttributesModule`, `SkillsModule`, `XpModule`, `ProgressionModule`, `AchievementsModule`, `LevelRewardsModule`, `NotificationsModule`, `QuestsModule`, `HabitsModule`, `GoalsModule`, `ChallengesModule`, `AnalyticsModule`, `FriendsModule`, `LeaderboardModule`, `AdminModule` |
+| `AppModule` | `ConfigModule` (global), `EventEmitterModule`, `ThrottlerModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `AttributesModule`, `SkillsModule`, `XpModule`, `ProgressionModule`, `AchievementsModule`, `LevelRewardsModule`, `NotificationsModule`, `QuestsModule`, `HabitsModule`, `GoalsModule`, `SeasonsModule`, `ChallengesModule`, `AnalyticsModule`, `FriendsModule`, `LeaderboardModule`, `AdminModule` |
 | `PrismaModule` | *(none — `@Global()`, exports `PrismaService` to every other module implicitly)* |
 | `AuthModule` | `PassportModule`, `JwtModule.register({})`, `AttributesModule` |
 | `UsersModule` | *(none)* |
@@ -99,6 +99,7 @@ listed in any other module's `imports` array.
 | `QuestsModule` | `ProgressionModule`, `SkillsModule`, `AttributesModule`, `GoalsModule` |
 | `HabitsModule` | `ProgressionModule`, `SkillsModule`, `AttributesModule` |
 | `GoalsModule` | `ProgressionModule`, `SkillsModule`, `AchievementsModule`, `AttributesModule` |
+| `SeasonsModule` | *(none)* |
 | `ChallengesModule` | `ProgressionModule` |
 | `AnalyticsModule` | *(none)* |
 | `FriendsModule` | *(none)* |
@@ -140,6 +141,7 @@ AppModule
 │   ├── SkillsModule
 │   ├── AchievementsModule (see above)
 │   └── AttributesModule (see above)
+├── SeasonsModule
 ├── ChallengesModule
 │   └── ProgressionModule (see above)
 ├── AnalyticsModule
@@ -613,15 +615,17 @@ quests) — and can optionally require linked skills. Sprint 4 ("Better Goals") 
     `skillRewardOverrides`, `attributeBonuses` ("XP Bundles" — see
     `docs/gameplay-systems.md`), and `milestones` (ordered ascending).
   - `findOne(userId, id)` — detail, adds linked `quests` and (Sprint 4) linked `habits`.
-  - `create(userId, dto)` — validates owned skills, requires `targetValue` for `NUMERIC`/
-    `COMPLETION` types, defaults `type: BINARY`, `xpReward: 500`; creates the goal's `GoalSkill`
-    rows (each carrying its `skillRewardOverrides` entry, if any, as `amount`) and
-    `ActivityAttributeBonus` rows; after creating, calls `AchievementsService.checkAndUnlock`
-    directly (goal-creation achievements have no XP event to piggyback on, so they can't go
-    through `ProgressionService`).
-  - `update(userId, id, dto)` — validates ownership/skills, replaces skill links if provided,
-    updates scalar fields; replaces `skillRewardOverrides` and `attributeBonuses` wholesale when
-    either is provided.
+  - `create(userId, dto)` — validates owned skills and (if set) owned `seasonId` via a private
+    `assertOwnedSeason` (Sprint 5, mirrors `QuestsService.assertOwnedGoal`'s shape), requires
+    `targetValue` for `NUMERIC`/`COMPLETION` types, defaults `type: BINARY`, `xpReward: 500`;
+    creates the goal's `GoalSkill` rows (each carrying its `skillRewardOverrides` entry, if any,
+    as `amount`) and `ActivityAttributeBonus` rows; after creating, calls
+    `AchievementsService.checkAndUnlock` directly (goal-creation achievements have no XP event to
+    piggyback on, so they can't go through `ProgressionService`).
+  - `update(userId, id, dto)` — validates ownership/skills/season (`seasonId` ownership check
+    skipped when `undefined` or explicitly `null`, since `null` means unlinking), replaces skill
+    links if provided, updates scalar fields; replaces `skillRewardOverrides` and
+    `attributeBonuses` wholesale when either is provided.
   - `remove(userId, id)` — validates ownership, deletes.
   - `progress(userId, id, dto)` — requires an `ACTIVE` goal; for `BINARY` goals any `value >= 1`
     completes it, for others `currentValue` is set directly and completion is
@@ -649,9 +653,51 @@ quests) — and can optionally require linked skills. Sprint 4 ("Better Goals") 
     claw back XP already awarded. Returns `{ milestone, completion? }`.
   - `removeMilestone(userId, goalId, milestoneId)` (Sprint 4) — validates ownership, deletes.
   - *(private)* `validateRewardBundle` (same shape as `QuestsService`'s).
-  - *(private)* `serialize`, `getOwnedGoal`, `getOwnedMilestone` (Sprint 4).
+  - *(private)* `assertOwnedSeason` (Sprint 5), `serialize`, `getOwnedGoal`, `getOwnedMilestone`
+    (Sprint 4).
 - **Depended on by:** `QuestsModule` (Sprint 4, via `syncCompletionProgress` - see the
   `QuestsModule` section above).
+
+### `SeasonsModule` (`backend/src/seasons/`)
+
+"Seasons and Chapters" (Sprint 5) — divides a user's progression into named chapters, each with a
+focus of one or more attributes and a date range. No cross-module dependencies: unlike every other
+gameplay module, `SeasonsModule` doesn't award XP or check achievements/level-rewards, so it has
+no need for `ProgressionModule`.
+
+- **Imports:** none.
+- **Controller:** `SeasonsController` — `GET /api/seasons` (filterable by `status`),
+  `POST /api/seasons`, `GET /api/seasons/:id`, `PATCH /api/seasons/:id`,
+  `POST /api/seasons/:id/close`, `DELETE /api/seasons/:id` — all guarded.
+- **Exports:** `SeasonsService`.
+  - `findAll(userId, filters)` — list, newest first by `startDate`; only fetches the user's
+    current level/attribute levels once (not per season) and only if the result set actually
+    contains an `ACTIVE` season, since `serialize` needs it for live deltas.
+  - `findOne(userId, id)` — detail, adds linked `goals` (`Goal[]` with `seasonId === id`, raw
+    Prisma rows, mirroring how `GoalsService.findOne` exposes linked `quests`/`habits`).
+  - `create(userId, dto)` — if the caller already has an `ACTIVE` season, closes it first (via the
+    private `closeSeason`, capturing its own end snapshot) before creating the new one; snapshots
+    `startLevel`/`startAttributeLevels` from the caller's *current* state at creation time.
+  - `update(userId, id, dto)` — edits `title`/`description`/`focus`/`endDate` only; does not touch
+    `status` or either snapshot (use `close`/`create` for that).
+  - `close(userId, id)` — `400 Bad Request` if the season isn't `ACTIVE`; otherwise delegates to
+    the private `closeSeason`.
+  - `remove(userId, id)` — validates ownership, deletes.
+  - *(private)* `closeSeason(userId, id)` — snapshots the caller's *current* level/attribute
+    levels as `endLevel`/`endAttributeLevels`, sets `closedAt` and `status: 'COMPLETED'`. Shared by
+    both `create` (auto-close) and `close` (manual).
+  - *(private)* `currentAttributeState(userId)` — one `Promise.all` fetching the user's character
+    level and all 8 attribute levels, returned as `{ level, attributeLevels }` where
+    `attributeLevels` is keyed by `AttributeKey`.
+  - *(private)* `serialize(season, current?)` — adds the derived `currentLevel`/`levelDelta`/
+    `attributeDeltas` fields (see `docs/api-reference.md` § "Seasons"). For a `COMPLETED` season,
+    reads from the season's own frozen `endLevel`/`endAttributeLevels`; for an `ACTIVE` season,
+    `current` (from `currentAttributeState`) must be passed in and is used instead - deltas for an
+    active season are always computed live, never cached.
+  - *(private)* `getOwnedSeason`.
+- **Depended on by:** nothing (only `AppModule`) - but see `GoalsModule` above, which duplicates a
+  small ownership check (`assertOwnedSeason`) rather than importing this module, matching the
+  codebase's established convention for these small cross-references.
 
 ### `ChallengesModule` (`backend/src/challenges/`)
 

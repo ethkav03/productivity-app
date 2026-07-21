@@ -8,7 +8,7 @@ every model, enum, and constraint currently in that schema.
 
 ## Migration history
 
-Twelve migrations exist as of this writing:
+Thirteen migrations exist as of this writing:
 
 | Migration folder | What it added |
 | --- | --- |
@@ -24,6 +24,7 @@ Twelve migrations exist as of this writing:
 | `20260720190000_daily_weekly_challenges` | Adds `CHALLENGE_COMPLETION` to `XPSourceType`; introduces `Challenge` (a time-boxed, entirely system-generated Daily/Weekly objective) and its `ChallengeType`/`ChallengeStatus` enums. Backs "Daily and Weekly Challenges" - see the model reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 3". |
 | `20260720200000_level_rewards` | Adds `LEVEL_REWARD_UNLOCK` to `NotificationType`; introduces `LevelReward` (a globally-seeded, character- or attribute-scoped reward unlocked at a level threshold) and `UserLevelReward` (per-user unlock record) and the `LevelRewardType` enum; adds `User.equippedTitleId` (nullable FK to `LevelReward`, `onDelete: SetNull`) and `User.habitStreakProtectionCharges` (`Int @default(0)`). Backs "Level-Up Rewards" - see the model reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 6". |
 | `20260720210000_better_goals` | Adds `MILESTONE_COMPLETION` to `XPSourceType`; adds `Habit.goalId` (nullable FK to `Goal`, `onDelete: SetNull`, mirroring `Quest.goalId`); introduces `GoalMilestone` (an ordered checklist item within a goal, optionally carrying its own small XP reward). Backs "Better Goals" - see the model reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 8". |
+| `20260721090000_seasons` | Introduces `Season` (a named chapter with a focus of 1+ attributes, a date range, and level/attribute-level snapshots at start and close) and the `SeasonStatus` enum; adds `Goal.seasonId` (nullable FK to `Season`, `onDelete: SetNull`). Backs "Seasons and Chapters" - see the model reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 13". |
 
 `migration_lock.toml` pins the schema to the `postgresql` provider (Prisma refuses to mix
 providers across migrations once this file exists).
@@ -44,7 +45,9 @@ User ──┬── Attribute (8 fixed, auto-created at registration)
        ├── Quest ──┬── QuestRequirement ──── one of Skill / Attribute / Achievement / Quest / Goal
        │           └── QuestCompletion (one row per completion, tracks claimedAt)
        ├── Habit ──── (optional) Goal
-       ├── Goal ──── GoalMilestone (ordered checklist items)
+       ├── Goal ──┬── GoalMilestone (ordered checklist items)
+       │          └── (optional) Season
+       ├── Season (also owned directly by User) ──── Goal[] (linked chapters' goals)
        ├── Challenge ──── Attribute (targeted) + optional Skill (descriptive)
        ├── XPTransaction (references User, and optionally Skill and/or Attribute)
        ├── UserAchievement ──── Achievement (global, not per-user)
@@ -67,7 +70,10 @@ also be locked behind zero or more `QuestRequirement` prerequisites ("level-gate
 each of its completions is its own `QuestCompletion` row tracking whether the reward has been
 claimed yet ("reward claiming" - see `docs/gameplay-systems.md`). A `Goal` can also own zero or
 more ordered `GoalMilestone` checklist items ("goal milestones" - Sprint 4), each optionally
-carrying its own small XP reward separate from the goal's own completion reward. A `Habit`'s
+carrying its own small XP reward separate from the goal's own completion reward, and can
+optionally belong to a `Season` (`seasonId`, "Seasons and Chapters" - Sprint 5) - a named chapter
+of the user's progression with a focus of one or more attributes, snapshotting the user's
+level/attribute levels at creation so its progress deltas stay meaningful once closed. A `Habit`'s
 individual check-ins are recorded as `HabitCompletion` rows. Every XP grant anywhere in the app is recorded as an
 `XPTransaction`, which can reference a `User` alone (character-level XP), or also a `Skill`
 and/or that skill's `Attribute` (the XP cascade). `Achievement` definitions are global (not
@@ -216,6 +222,7 @@ by completion, or as a binary done/not-done.
 | --- | --- | --- | --- |
 | `id` | `String` (uuid) | `@default(uuid())`, PK | |
 | `userId` | `String` | required | FK to `User`. |
+| `seasonId` | `String?` | nullable | FK to `Season` this goal belongs to ("Seasons and Chapters", Sprint 5). Organizational only - `onDelete: SetNull`; a season closing does not touch its linked goals' own status. |
 | `title` | `String` | required | |
 | `description` | `String?` | nullable | |
 | `category` | `String?` | nullable | |
@@ -231,12 +238,13 @@ by completion, or as a binary done/not-done.
 | `createdAt` | `DateTime` | `@default(now())` | |
 | `updatedAt` | `DateTime` | `@updatedAt` | |
 
-**Relations:** `user` (`onDelete: Cascade`), `quests[]` (quests that reference this goal),
-`habits[]` (habits that reference this goal via `Habit.goalId` - organizational only, never
-counted toward `COMPLETION`-type progress; Sprint 4), `goalSkills[]` (tagged skills via
-`GoalSkill`), `attributeBonuses[]` (`ActivityAttributeBonus[]`), `questRequirements[]`
-(`QuestRequirement[]` with a `GOAL_COMPLETED` requirement pointing at this goal), `milestones[]`
-(`GoalMilestone[]`, ordered checklist items - Sprint 4).
+**Relations:** `user` (`onDelete: Cascade`), `season` (`Season?`, `onDelete: SetNull` - Sprint 5),
+`quests[]` (quests that reference this goal), `habits[]` (habits that reference this goal via
+`Habit.goalId` - organizational only, never counted toward `COMPLETION`-type progress; Sprint 4),
+`goalSkills[]` (tagged skills via `GoalSkill`), `attributeBonuses[]`
+(`ActivityAttributeBonus[]`), `questRequirements[]` (`QuestRequirement[]` with a
+`GOAL_COMPLETED` requirement pointing at this goal), `milestones[]` (`GoalMilestone[]`, ordered
+checklist items - Sprint 4).
 
 **Constraints:** `@@index([userId])`. Maps to table `goals`.
 
@@ -264,6 +272,39 @@ completion reward.
 **Relations:** `goal` (`onDelete: Cascade`).
 
 **Constraints:** `@@index([goalId])`. Maps to table `goal_milestones`.
+
+---
+
+### Season
+
+"Seasons and Chapters" (Sprint 5): divides a user's progression into named chapters with a focus
+of one or more attributes and a date range, instead of one endless timeline. At most one `ACTIVE`
+season per user at a time - enforced in `SeasonsService`, not the database. `startAttributeLevels`
+snapshots every attribute's level at creation time, so a closed season's progress deltas stay
+fixed forever even as the user keeps leveling; an `ACTIVE` season's deltas are instead computed
+live against the user's *current* level/attribute levels at read time (see `docs/gameplay-systems.md`).
+
+| Field | Type | Default / Nullable | Notes |
+| --- | --- | --- | --- |
+| `id` | `String` (uuid) | `@default(uuid())`, PK | |
+| `userId` | `String` | required | FK to `User`. |
+| `title` | `String` | required | |
+| `description` | `String?` | nullable | |
+| `focus` | `AttributeKey[]` | required, 1+ | Which attributes this season is about. |
+| `startDate` | `DateTime` | `@default(now())` | |
+| `endDate` | `DateTime?` | nullable | Optional planned end date - purely descriptive, does not auto-close the season. |
+| `status` | `SeasonStatus` | `@default(ACTIVE)` | See enum reference. |
+| `startLevel` | `Int` | required | Character level snapshotted at creation. |
+| `startAttributeLevels` | `Json` | required | `{ [AttributeKey]: number }` snapshot of every attribute's level at creation. |
+| `closedAt` | `DateTime?` | nullable | Set when the season is closed (manually via `POST /seasons/:id/close`, or automatically when a new season starts). |
+| `endLevel` | `Int?` | nullable | Character level snapshotted at close. |
+| `endAttributeLevels` | `Json?` | nullable | `{ [AttributeKey]: number }` snapshot at close. |
+| `createdAt` | `DateTime` | `@default(now())` | |
+
+**Relations:** `user` (`onDelete: Cascade`), `goals[]` (`Goal[]` linked via `Goal.seasonId`).
+
+**Constraints:** `@@index([userId])`, `@@index([userId, status])` (supports "does this user have an
+active season" / history queries). Maps to table `seasons`.
 
 ---
 
@@ -738,6 +779,13 @@ leaderboard's comparison group is derived from `ACCEPTED` rows.
 | `ACTIVE` | Goal is in progress (the schema default). |
 | `COMPLETED` | Goal has been finished; `Goal.completedAt` is set. |
 | `ABANDONED` | Goal was given up on / cancelled. |
+
+### SeasonStatus
+
+| Value | Meaning |
+| --- | --- |
+| `ACTIVE` | The season is the user's current chapter (the schema default). At most one per user. |
+| `COMPLETED` | The season has been closed - manually, or automatically when a new season started; `Season.closedAt`/`endLevel`/`endAttributeLevels` are set. |
 
 ### QuestType
 

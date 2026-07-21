@@ -17,6 +17,7 @@ const goalInclude = {
   goalSkills: { include: { skill: { include: { attribute: true } } } },
   attributeBonuses: { include: { attribute: { select: { id: true, key: true, name: true } } } },
   milestones: { orderBy: { order: 'asc' } },
+  season: { select: { id: true, title: true } },
 } satisfies Prisma.GoalInclude;
 
 type GoalWithSkills = Prisma.GoalGetPayload<{ include: typeof goalInclude }>;
@@ -69,7 +70,7 @@ export class GoalsService {
       progressPercent = Math.min(100, Math.max(0, (numerator / goal.targetValue) * 100));
     }
 
-    const { goalSkills, attributeBonuses, milestones, ...rest } = goal;
+    const { goalSkills, attributeBonuses, milestones, season, ...rest } = goal;
     return {
       ...rest,
       skills: goalSkills.map((goalSkill) => goalSkill.skill),
@@ -80,6 +81,7 @@ export class GoalsService {
         amount: bonus.amount,
       })),
       milestones,
+      season: season ?? null,
       progressPercent,
     };
   }
@@ -113,6 +115,9 @@ export class GoalsService {
     if (dto.skillIds?.length) {
       await this.skillsService.assertOwnedSkillIds(userId, dto.skillIds);
     }
+    if (dto.seasonId) {
+      await this.assertOwnedSeason(userId, dto.seasonId);
+    }
     await this.validateRewardBundle(userId, dto.skillIds, dto.skillRewardOverrides, dto.attributeBonuses);
 
     const type = dto.type ?? 'BINARY';
@@ -134,6 +139,7 @@ export class GoalsService {
         unit: dto.unit,
         targetDate: dto.targetDate ? new Date(dto.targetDate) : undefined,
         xpReward,
+        seasonId: dto.seasonId,
         goalSkills: {
           create: (dto.skillIds ?? []).map((skillId) => ({ skillId, amount: overrideBySkillId.get(skillId) })),
         },
@@ -154,6 +160,10 @@ export class GoalsService {
 
   async update(userId: string, id: string, dto: UpdateGoalDto) {
     await this.getOwnedGoal(userId, id);
+
+    if (dto.seasonId !== undefined && dto.seasonId !== null) {
+      await this.assertOwnedSeason(userId, dto.seasonId);
+    }
 
     if (dto.skillIds) {
       await this.skillsService.assertOwnedSkillIds(userId, dto.skillIds);
@@ -202,6 +212,7 @@ export class GoalsService {
         ...(dto.targetDate !== undefined && { targetDate: new Date(dto.targetDate) }),
         ...(dto.xpReward !== undefined && { xpReward: dto.xpReward }),
         ...(dto.status !== undefined && { status: dto.status }),
+        ...(dto.seasonId !== undefined && { seasonId: dto.seasonId }),
       },
       include: goalInclude,
     });
@@ -365,6 +376,12 @@ export class GoalsService {
     const milestone = await this.prisma.goalMilestone.findUnique({ where: { id: milestoneId } });
     if (!milestone || milestone.goalId !== goalId) throw new NotFoundException('Milestone not found');
     return milestone;
+  }
+
+  /** See QuestsService.assertOwnedGoal - identical check, duplicated per module rather than shared across a DI boundary. */
+  private async assertOwnedSeason(userId: string, seasonId: string): Promise<void> {
+    const season = await this.prisma.season.findFirst({ where: { id: seasonId, userId } });
+    if (!season) throw new NotFoundException('Season not found');
   }
 
   private async getOwnedGoal(userId: string, id: string) {

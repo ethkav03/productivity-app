@@ -27,6 +27,11 @@ enum GoalStatus {
   ABANDONED
 }
 
+enum SeasonStatus {
+  ACTIVE
+  COMPLETED
+}
+
 enum QuestType {
   ONE_TIME
   RECURRING
@@ -171,6 +176,7 @@ model User {
   skills                 Skill[]
   attributes             Attribute[]
   goals                  Goal[]
+  seasons                Season[]
   quests                 Quest[]
   habits                 Habit[]
   habitCompletions       HabitCompletion[]
@@ -309,6 +315,10 @@ model Skill {
 model Goal {
   id          String     @id @default(uuid())
   userId      String
+  /// Optional season this goal belongs to ("Seasons and Chapters", Sprint 5) -
+  /// organizational only, mirroring how Quest/Habit link to a Goal. A season
+  /// closing does not touch its linked goals' own status.
+  seasonId    String?
   title       String
   description String?
   category    String?
@@ -329,6 +339,7 @@ model Goal {
   updatedAt DateTime @updatedAt
 
   user              User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  season            Season?                  @relation(fields: [seasonId], references: [id], onDelete: SetNull)
   quests            Quest[]
   /// Habits linked to this goal - organizational only, matching Quest.goalId's
   /// shape. Deliberately NOT counted toward a COMPLETION-type goal's progress
@@ -383,6 +394,42 @@ model GoalMilestone {
 
   @@index([goalId])
   @@map("goal_milestones")
+}
+
+/// "Seasons and Chapters" (Sprint 5): divides a user's progression into
+/// named chapters with a focus (1+ attributes) and a date range, instead of
+/// one endless timeline. At most one ACTIVE season per user at a time -
+/// enforced in SeasonsService, not the database. startAttributeLevels is a
+/// snapshot of every attribute's level at creation time ({ [AttributeKey]:
+/// number }), so a closed season's deltas stay fixed forever even as the
+/// user keeps leveling; an ACTIVE season's deltas are instead computed live
+/// against the user's *current* attribute levels (see SeasonsService).
+model Season {
+  id          String         @id @default(uuid())
+  userId      String
+  title       String
+  description String?
+  focus       AttributeKey[]
+
+  startDate DateTime     @default(now())
+  endDate   DateTime?
+  status    SeasonStatus @default(ACTIVE)
+
+  startLevel           Int
+  startAttributeLevels Json
+
+  closedAt           DateTime?
+  endLevel           Int?
+  endAttributeLevels Json?
+
+  createdAt DateTime @default(now())
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goals Goal[]
+
+  @@index([userId])
+  @@index([userId, status])
+  @@map("seasons")
 }
 
 model Quest {

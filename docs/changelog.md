@@ -4,6 +4,47 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-21 — Seasons and Chapters (backend)
+
+Backend slice of "Sprint 5: RPG Identity" (`docs/feature-roadmap.md`) - Phase 2 Features 9, 10,
+13, 14. Third sprint committing straight to `master`.
+
+While scoping this sprint, found that Feature 11 ("Titles and Perks") needs no new work at all -
+it's exactly what Sprint 3's "Level-Up Rewards" already shipped under a different name (the
+roadmap's own example titles are close matches for the seeded `title-beginner`/
+`title-consistent` rewards). That freed the sprint to focus on the roadmap's actual "RPG
+Identity" sprint grouping: character builds, skill trees, seasonal progression, and character
+identity (Features 9, 10, 13, 14).
+
+Added `Season` (migration `20260721090000_seasons`): a named chapter with a focus of one or more
+attributes and a date range. Snapshots the user's character level and all 8 attribute levels at
+creation (`startLevel`/`startAttributeLevels`) and again at close
+(`endLevel`/`endAttributeLevels`), so a closed season's progress deltas stay meaningful forever
+even as the user keeps leveling in later chapters - levels are never stored as a time series
+elsewhere in this app, so a point-in-time snapshot is the only practical way to answer "what did
+I accomplish this chapter" later. At most one `ACTIVE` season per user, enforced in
+`SeasonsService` rather than the database; starting a new season auto-closes whichever one is
+currently active first. For the active season, progress deltas are computed live against the
+user's current state on every read instead of being cached - "what have I done so far" is always
+fresh with no scheduled job needed. `Goal.seasonId` mirrors the pre-existing `Quest.goalId`/
+`Habit.goalId` pattern, matching the roadmap's own season example (which lists specific goals as
+part of a season's definition).
+
+Character builds (Feature 9) and skill trees (Feature 10) are scoped as pure frontend
+computations over data the API already returns (attribute levels, skill levels) - no backend
+change for either, landing in the next slice. Feature 14 ("Identity System") is deliberately
+deferred; the roadmap itself calls it long-term and synthesis-heavy, and it depends on season
+history that doesn't exist yet. See `gameplay-systems.md` § "Seasons and Chapters (Feature 13)"
+and `docs/feature-roadmap.md`'s Feature 9/10/14 deviation notes for the full reasoning.
+
+Verified against a real running dev server: starting a season, earning XP and confirming its live
+deltas update without any season-specific API call, linking a goal to it, starting a second
+season and confirming the first auto-closes with frozen deltas, confirming exactly one season is
+ever `ACTIVE`, manually closing without auto-starting a replacement, and rejecting a second close
+- 21 assertions, all passing. (Also spent a chunk of this session restarting Docker Desktop,
+the `db` container, and both dev servers after the machine went idle mid-sprint - unrelated to
+the feature itself, noted here only because it explains the gap in commit timestamps.)
+
 ## 2026-07-21 — Better Goals: milestones and auto-progress (frontend)
 
 Frontend slice of "Sprint 4: Better Goals" - Phase 1 Feature 8, closing out the sprint. Second

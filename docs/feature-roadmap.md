@@ -369,7 +369,9 @@ was explicitly reverted). Sprint 3 ("Meaningful Progression": level-up rewards, 
 unlockable quests, skill/attribute detail pages) and Sprint 4 ("Better Goals": goal milestones,
 goal decomposition, goal↔quest relationships, goal↔habit relationships, goal completion rewards)
 are both complete, each landed as two commits (backend slice, then frontend slice) straight to
-`master`.
+`master`. Sprint 5 ("RPG Identity": character builds, specialisations, skill trees, character
+identity, seasonal progression, chapters) is in progress - its backend slice (the `Season` model)
+is done.
 
 | Item | Status |
 | --- | --- |
@@ -385,6 +387,12 @@ are both complete, each landed as two commits (backend slice, then frontend slic
 | 6 — Level-Up Rewards | **Done** (Sprint 3, committed straight to `master` - see "Chosen entry point" above). `LevelReward` + `UserLevelReward`, data-driven `LevelRewardsService.checkAndUnlock` mirroring the achievement engine, 5 of the roadmap's 8 reward types built (`TITLE`, `BADGE`, `STREAK_PROTECTION`, `FEATURE_UNLOCK`, `QUEST`), equippable titles via a `PATCH /users/me` field + a Settings picker + a Topbar display, and a "Level Rewards" tab on `/achievements`. See `gameplay-systems.md` § "Level-up rewards (Feature 6)" and the deliberate-deviation note below. |
 | 7 — Skill and Attribute Detail Pages | **Done** (Sprint 3). New `/attributes/[id]` route (didn't exist at all before this sprint): level/XP header, nested skills, an "Unlocked Rewards" section, XP growth chart, recent activity. `/skills/[id]` gained a "What contributes to this skill?" section (quests/habits/goals currently tagged with it, filtered client-side over existing list endpoints - no new backend endpoint needed) and its "Part of {attribute}" link now actually links to the attribute page instead of `/skills`. See `docs/frontend.md`'s route table. |
 | 8 — Intelligent Goal Decomposition | **Done** (Sprint 4 "Better Goals", committed straight to `master`, closing out the sprint). `GoalMilestone` (ordered checklist items, optional small XP reward) and `Habit.goalId` (mirroring the pre-existing `Quest.goalId`) landed; a `COMPLETION`-type goal's progress now syncs automatically from linked quest completions instead of requiring a manual re-count. Frontend: the goal detail page gained a Milestones card and a Linked Habits card, and swapped its manual numeric input for a read-only note on `COMPLETION`-type goals; the habit modal gained a Goal picker mirroring the quest modal's. The roadmap's "intelligent"/AI-driven decomposition itself is out of scope - see the deliberate-deviation note below. |
+| 9 — Character Build System | Backend N/A - a pure frontend computation over `GET /attributes`'s existing data, in progress as part of Sprint 5 ("RPG Identity"). See the deliberate-deviation note below. |
+| 10 — Skill Trees | Backend N/A - a pure frontend computation over `GET /skills`'s existing `level` field, in progress as part of Sprint 5. Roadmap's "concrete unlocks per tier" deliberately deferred - see the note below. |
+| 11 — Titles and Perks | **Already done** - this is exactly what Sprint 3's "Level-Up Rewards" shipped, just under a different name. No new work in Sprint 5. See `gameplay-systems.md` § "Seasons and Chapters (Feature 13)" for a short note on why, and § "Level-up rewards (Feature 6)" for the full design. |
+| 12 — Unlockable Content | Not yet built - not part of Sprint 5's scope (the roadmap's own 7-sprint list doesn't slot this feature into any specific sprint). |
+| 13 — Seasons and Chapters | **Backend done** (Sprint 5 "RPG Identity", committed straight to `master`). New `Season` model - a named chapter with a focus of 1+ attributes, snapshotting level/attribute levels at start and close so progress deltas stay meaningful once closed; at most one `ACTIVE` season per user, enforced in `SeasonsService`. `Goal.seasonId` mirrors the pre-existing `Quest.goalId`/`Habit.goalId` pattern. See `gameplay-systems.md` § "Seasons and Chapters (Feature 13)". Frontend not yet built. |
+| 14 — Identity System | Deliberately deferred - see the note below. |
 | Everything in Phases 2-4 | Not yet built - out of scope for Sprint 2. |
 
 **Deliberate deviation:** `eventId` was added as a real schema column (not in the original
@@ -489,3 +497,37 @@ same list is the pre-existing XP Bundle machinery (`xpReward`, `GoalSkill.amount
 milestones and quest-linked auto-progress (Feature 8)" for the full design, including a real bug
 fix that shipped alongside this feature: `COMPLETION`-type goals previously never updated their
 progress automatically when a linked quest completed - they do now.
+
+**Deliberate deviation:** Feature 9's proposal names 8 specific archetypes (Warrior, Scholar,
+Athlete, Entrepreneur, Creator, Socialite, Balanced, Custom) inferred from the user's attribute
+distribution. Rather than building a stored classification, this is computed entirely client-side
+from data `GET /attributes` already returns (each attribute's `level`) - no new backend endpoint,
+model, or migration. A small curated table maps specific attribute pairs to a named archetype
+(e.g. Physical+Discipline → Warrior); a fallback ("Balanced") applies when the top two attribute
+levels are close enough that no single pairing dominates, and another ("Explorer," not the
+roadmap's "Custom" - a friendlier name for the same "doesn't match a curated pair" case) covers
+everything else. This is intentionally read-only and re-derived on every view, matching the
+roadmap's own requirement that a build "never permanently locks the user."
+
+**Deliberate deviation:** Feature 10's proposal is a visual progression tree per skill with
+concrete tier unlocks (e.g. "Strength Level 5 → Beginner Strength Quests"). What's built is the
+tier *labeling* half only - a skill's level maps to a named tier (Beginner/Novice/Intermediate/
+Advanced/Master, thresholds tunable in one place), computed client-side from `skill.level`
+exactly like Feature 9's archetype, no backend change. The "concrete unlocks per tier" half is
+deliberately not built: `LevelRewardsService` (Sprint 3) was explicitly designed to never target a
+skill, since skills are user-created rather than fixed like the 8 attributes - see
+`gameplay-systems.md` § "Level-up rewards (Feature 6)" for that reasoning. Building per-skill tier
+unlocks would mean either reopening that decision or inventing a second, parallel unlock mechanism
+for one visual flourish; neither is justified by "skills should look like a tier chain."
+
+**Deliberate deviation:** Feature 14 ("Identity System") is not built this sprint, and is left
+entirely for later. The roadmap's own text calls it "a long-term feature" and "the emotional core
+of the product" in the same breath - a synthesis of XP distribution, completed quests, goals,
+achievements, "recent behaviour," and season focus into a narrative identity statement. That last
+part in particular - reading "recent behaviour" into a characterization - edges toward the kind of
+open-ended synthesis the roadmap itself reserves for Phase 4 ("Intelligence Layer"), not something
+a fixed rules table can do honestly the way Feature 9's archetype lookup can. It also has a real
+dependency this sprint just created: Feature 14's "contrasting a previous chapter against the
+current one" reads naturally as built on top of `Season` history, which won't have any real
+history to synthesize from until seasons have actually been used for a while. Revisit once there's
+season data to work with and once Phase 4 groundwork exists.
