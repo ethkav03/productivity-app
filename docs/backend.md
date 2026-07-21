@@ -85,7 +85,7 @@ listed in any other module's `imports` array.
 
 | Module | Imports (from `imports: [...]`) |
 | --- | --- |
-| `AppModule` | `ConfigModule` (global), `EventEmitterModule`, `ThrottlerModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `AttributesModule`, `SkillsModule`, `XpModule`, `ProgressionModule`, `AchievementsModule`, `LevelRewardsModule`, `NotificationsModule`, `QuestsModule`, `HabitsModule`, `GoalsModule`, `SeasonsModule`, `ChallengesModule`, `AnalyticsModule`, `FriendsModule`, `LeaderboardModule`, `AdminModule` |
+| `AppModule` | `ConfigModule` (global), `EventEmitterModule`, `ThrottlerModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `AttributesModule`, `SkillsModule`, `XpModule`, `ProgressionModule`, `AchievementsModule`, `LevelRewardsModule`, `NotificationsModule`, `QuestsModule`, `HabitsModule`, `GoalsModule`, `SeasonsModule`, `JournalModule`, `ChallengesModule`, `AnalyticsModule`, `FriendsModule`, `LeaderboardModule`, `AdminModule` |
 | `PrismaModule` | *(none — `@Global()`, exports `PrismaService` to every other module implicitly)* |
 | `AuthModule` | `PassportModule`, `JwtModule.register({})`, `AttributesModule` |
 | `UsersModule` | *(none)* |
@@ -100,6 +100,7 @@ listed in any other module's `imports` array.
 | `HabitsModule` | `ProgressionModule`, `SkillsModule`, `AttributesModule` |
 | `GoalsModule` | `ProgressionModule`, `SkillsModule`, `AchievementsModule`, `AttributesModule` |
 | `SeasonsModule` | *(none)* |
+| `JournalModule` | *(none)* |
 | `ChallengesModule` | `ProgressionModule` |
 | `AnalyticsModule` | *(none)* |
 | `FriendsModule` | *(none)* |
@@ -142,6 +143,7 @@ AppModule
 │   ├── AchievementsModule (see above)
 │   └── AttributesModule (see above)
 ├── SeasonsModule
+├── JournalModule
 ├── ChallengesModule
 │   └── ProgressionModule (see above)
 ├── AnalyticsModule
@@ -699,6 +701,42 @@ no need for `ProgressionModule`.
   small ownership check (`assertOwnedSeason`) rather than importing this module, matching the
   codebase's established convention for these small cross-references.
 
+### `JournalModule` (`backend/src/journal/`)
+
+"Daily Journal" / "Mood and Energy Tracking" / "Daily Energy - Capacity" (Sprint 6, Features
+15/17/18). No cross-module dependencies - like `SeasonsModule`, it never awards XP or touches
+achievements/level-rewards, so it has no need for `ProgressionModule`.
+
+- **Imports:** none.
+- **Controller:** `JournalController` — `GET /api/journal` (day summary, `?date=`), `PUT
+  /api/journal/:date` (upsert), `GET /api/journal/history` (`?days=`), `GET /api/journal/capacity`,
+  `GET /api/journal/correlations` — all guarded.
+- **Exports:** `JournalService`.
+  - `getDay(userId, date)` — the `JournalEntry` for that day (`null` if none) plus
+    `activitiesCompleted`/`xpEarned`, computed live via `getDayStats` rather than stored on the
+    entry (same derive-don't-duplicate approach as `Goal.progressPercent`).
+  - *(private)* `getDayStats(userId, date)` — a single `XPTransaction.aggregate` over
+    character-level rows (`skillId`/`attributeId` both null) within that UTC calendar day
+    (`endOfDayUtc` from `common/period.ts` bounds the range).
+  - `upsert(userId, date, dto)` — a plain Prisma `upsert` keyed on the `[userId, date]` compound
+    unique.
+  - `history(userId, days)` — entries with `date >= ` (today minus `days`), newest first.
+  - `getCapacity(userId)` — "Daily Capacity" (Feature 15, light version): averages `mood`/
+    `energyLevel` (both 1-5) across the last 3 days' entries, rescales to 0-100. Returns
+    `score: null` (not a guessed default) if nothing's been logged in that window - see the
+    method's own doc comment for why the roadmap's fuller "workload/training/stress/recovery/
+    momentum" formula isn't attempted.
+  - `getCorrelations(userId)` — "Mood and Energy Tracking" (Feature 18): two fixed comparisons
+    (average character XP on `mood >= 4` vs `< 4` days; same for `sleepHours >= 7` vs `< 7`), each
+    requiring at least `CORRELATION_MIN_SAMPLE` (3) days on both sides or omitted as `null`.
+    Deliberately not a general correlation engine - framed as an observation over the user's own
+    data, not a scientific claim, per the roadmap's own caution.
+  - *(private)* `xpEarnedByDate`, `compareByThreshold` (the shared comparison logic behind both
+    correlations).
+- **Depended on by:** nothing (only `AppModule`) - `AnalyticsService.getTimeline` reads
+  `JournalEntry` rows directly via Prisma rather than importing this module, matching the
+  established convention (see `AnalyticsModule` below).
+
 ### `ChallengesModule` (`backend/src/challenges/`)
 
 Entirely system-generated Daily/Weekly Challenges — no create/update/delete endpoint. Lazily
@@ -743,9 +781,10 @@ Read-only aggregation over the XP ledger and related resources — no writes, no
 - **Controller:** `AnalyticsController` — `GET /api/analytics/overview`,
   `GET /api/analytics/xp?days=`, `GET /api/analytics/skills`, `GET /api/analytics/attributes`,
   `GET /api/analytics/activity?days=`, `GET /api/analytics/feed?limit=`,
-  `GET /api/analytics/xp-history?sourceType=&limit=&before=` — all guarded. The controller
-  clamps `days` to `[1, 365]` (defaults 30 for `/xp`, 84 for `/activity`), `limit` to `[1, 100]`
-  (default 15 for `/feed`, 20 for `/xp-history`), and validates `sourceType` against the
+  `GET /api/analytics/xp-history?sourceType=&limit=&before=`,
+  `GET /api/analytics/timeline?limit=` (Sprint 6) — all guarded. The controller clamps `days` to
+  `[1, 365]` (defaults 30 for `/xp`, 84 for `/activity`), `limit` to `[1, 100]` (default 15 for
+  `/feed`, 20 for `/xp-history`, 50 for `/timeline`), and validates `sourceType` against the
   `XPSourceType` enum (an invalid/missing value just means "no filter").
 - **Providers:** `AnalyticsService` (not exported — no other module depends on it).
   - `overview(userId)` — character level state, `xpThisWeek`, `activitiesCompleted` (count of
@@ -768,6 +807,20 @@ Read-only aggregation over the XP ledger and related resources — no writes, no
     `min(300, max(limit * 10, 50))` raw rows as a buffer before grouping, since grouping reduces
     the row count - generous for the common case, but a page could fall short of `limit` for a
     user with unusually large multi-skill events.
+  - `getTimeline(userId, limit)` (Sprint 6, "Life Timeline") — merges six independently-fetched,
+    independently-capped sources (`UserAchievement`, `UserLevelReward`, completed `Goal`s, closed
+    `Season`s, claimed `EPIC`/`LEGENDARY` `QuestCompletion`s, non-empty-note `JournalEntry` rows -
+    reading `JournalModule`'s table directly via Prisma rather than importing that module, the
+    same convention `GoalsModule`/`SeasonsModule` already use for their own small
+    cross-references) plus reconstructed character level-ups, tags each with a `type`, sorts by
+    date descending, and truncates to `limit`. Deliberately excludes routine quest/habit
+    completions - already covered by `feed`/`xpHistory` above; this is about milestones.
+  - *(private)* `reconstructLevelUps(userId, limit)` — character level-ups have no dedicated
+    stored event (levels are always recomputed from cumulative XP, never persisted as history).
+    Replays character-level `XPTransaction` rows in chronological order, running
+    `calculateLevelState` on the cumulative total after each, and records the moment it crosses
+    each level threshold. Scoped to the character only, not the 8 attributes too - see the
+    deliberate-deviation note in `docs/feature-roadmap.md` § "Feature 19".
 - **Depended on by:** nothing (only `AppModule`).
 
 ### `FriendsModule` (`backend/src/friends/`)

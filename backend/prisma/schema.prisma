@@ -186,6 +186,7 @@ model User {
   userAchievements       UserAchievement[]
   userLevelRewards       UserLevelReward[]
   notifications          Notification[]
+  journalEntries         JournalEntry[]
   sentFriendRequests     Friendship[]      @relation("FriendshipRequester")
   receivedFriendRequests Friendship[]      @relation("FriendshipAddressee")
   equippedTitle          LevelReward?      @relation("EquippedTitle", fields: [equippedTitleId], references: [id], onDelete: SetNull)
@@ -791,4 +792,32 @@ model Notification {
   @@index([userId])
   @@index([userId, read])
   @@map("notifications")
+}
+
+/// "Daily Journal" / "Mood and Energy Tracking" (Sprint 6, Features 17-18): one row per user per
+/// calendar day. `date` is a UTC day key (see common/period.ts's getDayKey), the same convention
+/// `HabitCompletion.periodKey` already uses, rather than a DateTime - a journal entry is inherently
+/// about a calendar day, not a timestamp. All tracked fields are optional so a user can log
+/// whichever subset they want on a given day. "What was completed and XP earned that day" (per the
+/// roadmap's own framing) is deliberately NOT stored here - it's computed live from XPTransaction
+/// at read time by JournalService, the same "derived, not duplicated" approach used for
+/// Goal.progressPercent and friends.
+model JournalEntry {
+  id          String  @id @default(uuid())
+  userId      String
+  date        String
+  mood        Int?
+  energyLevel Int?
+  sleepHours  Float?
+  stressLevel Int?
+  note        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@index([userId])
+  @@map("journal_entries")
 }

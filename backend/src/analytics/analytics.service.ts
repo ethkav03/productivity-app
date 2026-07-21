@@ -251,4 +251,134 @@ export class AnalyticsService {
       };
     });
   }
+
+  /**
+   * "Life Timeline" (Sprint 6, Feature 19): a chronological feed of notable
+   * moments, merged from six sources that otherwise live in unrelated
+   * tables - deliberately *not* every quest/habit completion (that's what
+   * `xpHistory`/`feed` already show; this is about milestones, not the
+   * routine ledger). Each source is fetched independently (capped at
+   * `limit` rows each) then merged and re-sorted, so an unusually dense
+   * source can't starve the others out at the query level - the tradeoff is
+   * that a single very active source could still push an older item from a
+   * quieter source below the final `limit` after merging.
+   */
+  async getTimeline(userId: string, limit: number) {
+    const [achievements, levelRewards, goals, seasons, notableQuests, memories, levelUps] = await Promise.all([
+      this.prisma.userAchievement.findMany({
+        where: { userId },
+        include: { achievement: true },
+        orderBy: { unlockedAt: 'desc' },
+        take: limit,
+      }),
+      this.prisma.userLevelReward.findMany({
+        where: { userId },
+        include: { levelReward: true },
+        orderBy: { unlockedAt: 'desc' },
+        take: limit,
+      }),
+      this.prisma.goal.findMany({
+        where: { userId, status: 'COMPLETED', completedAt: { not: null } },
+        orderBy: { completedAt: 'desc' },
+        take: limit,
+      }),
+      this.prisma.season.findMany({
+        where: { userId, status: 'COMPLETED', closedAt: { not: null } },
+        orderBy: { closedAt: 'desc' },
+        take: limit,
+      }),
+      this.prisma.questCompletion.findMany({
+        where: { userId, claimedAt: { not: null }, quest: { difficulty: { in: ['EPIC', 'LEGENDARY'] } } },
+        include: { quest: { select: { title: true, difficulty: true } } },
+        orderBy: { completedAt: 'desc' },
+        take: limit,
+      }),
+      this.prisma.journalEntry.findMany({
+        where: { userId, note: { not: null } },
+        orderBy: { date: 'desc' },
+        take: limit,
+      }),
+      this.reconstructLevelUps(userId, limit),
+    ]);
+
+    const events = [
+      ...achievements.map((row) => ({
+        type: 'ACHIEVEMENT' as const,
+        date: row.unlockedAt,
+        title: row.achievement.name,
+        description: row.achievement.description as string | null,
+      })),
+      ...levelRewards.map((row) => ({
+        type: 'LEVEL_REWARD' as const,
+        date: row.unlockedAt,
+        title: row.levelReward.name,
+        description: row.levelReward.description as string | null,
+      })),
+      ...goals.map((row) => ({
+        type: 'GOAL_COMPLETED' as const,
+        date: row.completedAt as Date,
+        title: row.title,
+        description: null as string | null,
+      })),
+      ...seasons.map((row) => ({
+        type: 'SEASON_CLOSED' as const,
+        date: row.closedAt as Date,
+        title: row.title,
+        description: row.endLevel != null ? `Reached Character Level ${row.endLevel}` : null,
+      })),
+      ...notableQuests.map((row) => ({
+        type: 'NOTABLE_QUEST' as const,
+        date: row.completedAt,
+        title: row.quest.title,
+        description: row.quest.difficulty,
+      })),
+      ...memories.map((row) => ({
+        type: 'MEMORY' as const,
+        date: new Date(`${row.date}T12:00:00.000Z`),
+        title: row.note as string,
+        description: null as string | null,
+      })),
+      ...levelUps.map((row) => ({
+        type: 'LEVEL_UP' as const,
+        date: row.date,
+        title: `Reached Character Level ${row.level}`,
+        description: null as string | null,
+      })),
+    ];
+
+    events.sort((a, b) => b.date.getTime() - a.date.getTime());
+    return events.slice(0, limit);
+  }
+
+  /**
+   * Character level-ups have no dedicated stored event - levels are always
+   * recomputed from cumulative XP, never persisted as a history (see
+   * `calculateLevelState`). Reconstructs approximate level-up timestamps by
+   * replaying character-level XPTransaction rows (skillId/attributeId both
+   * null) in chronological order and recording the moment the running total
+   * crosses each level threshold. Scoped to the character only, not the 8
+   * attributes too - see the deliberate-deviation note in
+   * `docs/feature-roadmap.md` § "Feature 19".
+   */
+  private async reconstructLevelUps(userId: string, limit: number) {
+    const rows = await this.prisma.xPTransaction.findMany({
+      where: { userId, skillId: null, attributeId: null, amount: { gt: 0 } },
+      orderBy: { createdAt: 'asc' },
+      select: { amount: true, createdAt: true },
+    });
+
+    const events: Array<{ date: Date; level: number }> = [];
+    let cumulative = 0;
+    let lastLevel = 1;
+    for (const row of rows) {
+      cumulative += row.amount;
+      const { level } = calculateLevelState(cumulative);
+      if (level > lastLevel) {
+        events.push({ date: row.createdAt, level });
+        lastLevel = level;
+      }
+    }
+
+    return events.slice(-limit).reverse();
+  }
 }

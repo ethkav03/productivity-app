@@ -67,4 +67,10 @@ export class AnalyticsController {
     const beforeDate = beforeParam && !Number.isNaN(new Date(beforeParam).getTime()) ? new Date(beforeParam) : undefined;
     return this.analyticsService.xpHistory(user.userId, sourceType, limit, beforeDate);
   }
+
+  @Get('timeline')
+  timeline(@CurrentUser() user: AuthenticatedUser, @Query('limit') limitParam?: string) {
+    const limit = Math.min(100, Math.max(1, parseInt(limitParam ?? '50', 10) || 50));
+    return this.analyticsService.getTimeline(user.userId, limit);
+  }
 }

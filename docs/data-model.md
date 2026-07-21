@@ -8,7 +8,7 @@ every model, enum, and constraint currently in that schema.
 
 ## Migration history
 
-Thirteen migrations exist as of this writing:
+Fourteen migrations exist as of this writing:
 
 | Migration folder | What it added |
 | --- | --- |
@@ -25,6 +25,7 @@ Thirteen migrations exist as of this writing:
 | `20260720200000_level_rewards` | Adds `LEVEL_REWARD_UNLOCK` to `NotificationType`; introduces `LevelReward` (a globally-seeded, character- or attribute-scoped reward unlocked at a level threshold) and `UserLevelReward` (per-user unlock record) and the `LevelRewardType` enum; adds `User.equippedTitleId` (nullable FK to `LevelReward`, `onDelete: SetNull`) and `User.habitStreakProtectionCharges` (`Int @default(0)`). Backs "Level-Up Rewards" - see the model reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 6". |
 | `20260720210000_better_goals` | Adds `MILESTONE_COMPLETION` to `XPSourceType`; adds `Habit.goalId` (nullable FK to `Goal`, `onDelete: SetNull`, mirroring `Quest.goalId`); introduces `GoalMilestone` (an ordered checklist item within a goal, optionally carrying its own small XP reward). Backs "Better Goals" - see the model reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 8". |
 | `20260721090000_seasons` | Introduces `Season` (a named chapter with a focus of 1+ attributes, a date range, and level/attribute-level snapshots at start and close) and the `SeasonStatus` enum; adds `Goal.seasonId` (nullable FK to `Season`, `onDelete: SetNull`). Backs "Seasons and Chapters" - see the model reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` § "Feature 13". |
+| `20260721100000_daily_journal` | Introduces `JournalEntry` (one row per user per calendar day: `mood`, `energyLevel`, `sleepHours`, `stressLevel`, `note`, all optional). Backs "Daily Journal" / "Mood and Energy Tracking" - see the model reference below, `docs/gameplay-systems.md`, and `docs/feature-roadmap.md` §§ "Feature 17"/"Feature 18". |
 
 `migration_lock.toml` pins the schema to the `postgresql` provider (Prisma refuses to mix
 providers across migrations once this file exists).
@@ -53,6 +54,7 @@ User ──┬── Attribute (8 fixed, auto-created at registration)
        ├── UserAchievement ──── Achievement (global, not per-user)
        ├── UserLevelReward ──── LevelReward (global, not per-user)
        ├── equippedTitle ──── (optional) LevelReward of type TITLE
+       ├── JournalEntry (one per calendar day, unique per [User, date])
        ├── Notification
        └── Friendship (as requester or addressee) ──── the other User
 ```
@@ -80,10 +82,14 @@ and/or that skill's `Attribute` (the XP cascade). `Achievement` definitions are 
 per-user) and unlocked per user via `UserAchievement`. `LevelReward` definitions are likewise
 global (not per-user), scoped to either the character level or one of the 8 fixed attributes
 (never a user-created skill), and unlocked per user via `UserLevelReward`; a user may optionally
-equip one unlocked `TITLE`-type `LevelReward` via `User.equippedTitleId`. `Notification` is a simple per-user
-inbox row. `Friendship` is a single row per pair of users (not duplicated per direction) linking
-two `User`s via `requester`/`addressee`; the leaderboard's comparison group for a user is
-themselves plus everyone they have an `ACCEPTED` `Friendship` row with, in either direction.
+equip one unlocked `TITLE`-type `LevelReward` via `User.equippedTitleId`. `JournalEntry` is one
+optional-fields row per user per calendar day ("Daily Journal" - Sprint 6), unique on
+`[userId, date]`; the day's "activities completed" and "XP earned" are deliberately not stored on
+it, only computed live from `XPTransaction` at read time (see `docs/gameplay-systems.md`).
+`Notification` is a simple per-user inbox row. `Friendship` is a single row per pair of users (not
+duplicated per direction) linking two `User`s via `requester`/`addressee`; the leaderboard's
+comparison group for a user is themselves plus everyone they have an `ACCEPTED` `Friendship` row
+with, in either direction.
 
 ---
 
@@ -113,11 +119,12 @@ Represents an account/character: identity, auth state, and the top-level charact
 | `createdAt` | `DateTime` | `@default(now())` | |
 | `updatedAt` | `DateTime` | `@updatedAt` | |
 
-**Relations:** `skills[]`, `attributes[]`, `goals[]`, `quests[]`, `habits[]`,
+**Relations:** `skills[]`, `attributes[]`, `goals[]`, `seasons[]`, `quests[]`, `habits[]`,
 `habitCompletions[]`, `questCompletions[]`, `challenges[]`, `xpTransactions[]`,
-`userAchievements[]`, `userLevelRewards[]`, `notifications[]` — all one-to-many, all with
-`onDelete: Cascade` from the child side (deleting a `User` deletes every dependent row); plus
-`equippedTitle` (`LevelReward?`, `onDelete: SetNull`, the one currently-displayed title, if any).
+`userAchievements[]`, `userLevelRewards[]`, `journalEntries[]`, `notifications[]` — all
+one-to-many, all with `onDelete: Cascade` from the child side (deleting a `User` deletes every
+dependent row); plus `equippedTitle` (`LevelReward?`, `onDelete: SetNull`, the one
+currently-displayed title, if any).
 
 **Constraints:** none beyond the field-level `@unique` on `email` and `username`. Maps to table
 `users`.
@@ -706,6 +713,33 @@ Records that a given user has unlocked a given `LevelReward`.
 - `@@index([userId])`
 
 Maps to table `user_level_rewards`.
+
+---
+
+### JournalEntry
+
+"Daily Journal" / "Mood and Energy Tracking" (Sprint 6, Features 17-18): one row per user per
+calendar day, all tracked fields optional so a user can log whichever subset they want. `date` is
+a UTC day key (`common/period.ts`'s `getDayKey()`), the same convention `HabitCompletion.periodKey`
+already uses.
+
+| Field | Type | Default / Nullable | Notes |
+| --- | --- | --- | --- |
+| `id` | `String` (uuid) | `@default(uuid())`, PK | |
+| `userId` | `String` | required | FK to `User`. |
+| `date` | `String` | required | UTC day key (`YYYY-MM-DD`). |
+| `mood` | `Int?` | nullable | 1 (low) - 5 (high). |
+| `energyLevel` | `Int?` | nullable | 1 (low) - 5 (high). |
+| `sleepHours` | `Float?` | nullable | |
+| `stressLevel` | `Int?` | nullable | 1 (low) - 5 (high). |
+| `note` | `String?` | nullable | Free text, max 2000 chars (enforced by `UpsertJournalEntryDto`, not the DB). Non-empty notes double as "memories" on the Life Timeline - see `docs/gameplay-systems.md`. |
+| `createdAt` | `DateTime` | `@default(now())` | |
+| `updatedAt` | `DateTime` | `@updatedAt` | |
+
+**Relations:** `user` (`onDelete: Cascade`).
+
+**Constraints:** `@@unique([userId, date])` — at most one entry per user per day; `PUT
+/journal/:date` upserts against this. `@@index([userId])`. Maps to table `journal_entries`.
 
 ---
 

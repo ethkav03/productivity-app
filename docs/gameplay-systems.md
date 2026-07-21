@@ -3,9 +3,10 @@
 This is a deep-dive reference for Life RPG's core game-mechanic logic: the XP ledger, the
 leveling formula, the completion workflow, duplicate-completion safety, the achievement engine,
 the friends/leaderboard social layer, level-up rewards, goal milestones/quest-linked
-auto-progress, and seasons/chapters. It documents the current backend implementation as of this
-writing, not an aspirational design. If you change any of the mechanics described here, update
-this file in the same change (see the closing note at the bottom).
+auto-progress, seasons/chapters, and the daily journal/capacity/correlations/life timeline layer.
+It documents the current backend implementation as of this writing, not an aspirational design.
+If you change any of the mechanics described here, update this file in the same change (see the
+closing note at the bottom).
 
 Source files referenced throughout:
 
@@ -15,7 +16,9 @@ Source files referenced throughout:
 - `backend/src/level-rewards/level-rewards.service.ts`
 - `backend/src/common/leveling.ts`, `backend/src/common/period.ts`
 - `backend/src/quests/quests.service.ts`, `backend/src/habits/habits.service.ts`,
-  `backend/src/goals/goals.service.ts`, `backend/src/seasons/seasons.service.ts`
+  `backend/src/goals/goals.service.ts`, `backend/src/seasons/seasons.service.ts`,
+  `backend/src/journal/journal.service.ts`
+- `backend/src/analytics/analytics.service.ts`
 - `backend/src/auth/auth.service.ts`, `backend/src/attributes/attributes.service.ts`,
   `backend/src/attributes/default-attributes.ts`, `backend/src/skills/default-skills.ts`
 - `backend/src/friends/friends.service.ts`, `backend/src/leaderboard/leaderboard.service.ts`,
@@ -1124,7 +1127,87 @@ linked goals' own `status` - a chapter ending doesn't retroactively abandon goal
 genuinely active; they simply stop being "this chapter's goals" in a forward-looking sense (they
 remain visible via `GET /seasons/:id`'s `goals` list, now on a `COMPLETED` season).
 
-## 16. Keep this file in sync
+## 16. Daily Journal, Capacity, Correlations, and Life Timeline (Sprint 6)
+
+Sprint 6 ("Self-Improvement Layer") targets the roadmap's own grouping - "daily energy, recovery,
+daily journal, mood tracking, correlation analytics, life timeline" - which maps to Features
+15-19. Feature 16 ("Recovery System") is deliberately not built - see the deliberate-deviation
+note in `docs/feature-roadmap.md` § "Feature 16" for why both of its halves were already covered
+or out of scope.
+
+### Derive, don't duplicate: the day summary
+
+`JournalEntry` (`backend/prisma/schema.prisma`) stores only what the user actually logs -
+`mood`/`energyLevel`/`sleepHours`/`stressLevel`/`note`, one row per calendar day. It deliberately
+does **not** store "activities completed" or "XP earned that day," even though the roadmap's own
+Feature 17 description lists both as part of "a daily log connecting real life to progression."
+`JournalService.getDay` computes both live, via a single `XPTransaction.aggregate` scoped to
+character-level rows (`skillId`/`attributeId` both null) within that UTC calendar day - the same
+"derive from the ledger, don't duplicate onto a new row" approach `Goal.progressPercent`,
+`Habit.completedToday`, and `GoalsService.syncCompletionProgress` all already use. The alternative
+(writing `activitiesCompleted`/`xpEarned` onto the journal row at completion time) would mean a
+third write path into journal state, with no way to keep it in sync if a completion is ever
+corrected or the day's ledger otherwise changes after the fact.
+
+### Daily Capacity (Feature 15) - a light version, honestly scoped
+
+The roadmap's Feature 15 describes `DAILY CAPACITY: 78/100`, "influenced by sleep, recent workload,
+training, stress, recovery, rest, and momentum" - a weighted formula across seven inputs. What's
+built is much smaller: `JournalService.getCapacity` averages just `mood` and `energyLevel` (both
+1-5 scales) across the last 3 days' entries and rescales to 0-100. The other five inputs the
+roadmap names either don't exist as trackable data yet (workload, training load) or would require
+inventing a weighting formula with no real usage data to validate it against - guessing "sleep
+matters 30%, stress matters 20%" without ever having watched those weights against real outcomes
+would be pure invention dressed up as a formula. Returns `score: null` rather than a fabricated
+default when the user hasn't logged anything in the lookback window, so the frontend can
+distinguish "genuinely low capacity" from "no data yet" (see `docs/frontend.md` for how the
+dashboard widget renders that difference).
+
+Critically, per the roadmap's own explicit framing, **capacity never gates anything** - it's
+informational only, "recommends" rather than "prevents." Nothing in this codebase currently reads
+`getCapacity`'s output to lock or unlock any action; it exists purely as a number the user can see.
+
+### Correlations (Feature 18) - observations, not conclusions
+
+`JournalService.getCorrelations` computes exactly two fixed comparisons - average character XP
+earned on higher-mood (`mood >= 4`) vs lower-mood days, and on more-sleep (`sleepHours >= 7`) vs
+less-sleep days - rather than a general-purpose correlation engine over every tracked field against
+every outcome. Each comparison is withheld (`null`) unless there are at least `CORRELATION_MIN_
+SAMPLE` (3) days on *both* sides of the split; a comparison built from one low-sleep day and eight
+high-sleep days would look like a finding while really being noise. This matters more than usual
+here because the roadmap itself is explicit that this feature must "present these as observations,
+not definitive medical conclusions" - a comparison that fires on a handful of scattered days for a
+new user is exactly the kind of shaky signal likely to be misread as a real pattern.
+
+### Life Timeline (Feature 19) - merging what already exists, plus one thing that doesn't
+
+The Analytics module already has two chronological views (`feed`, `xpHistory`) over the raw XP
+ledger. `AnalyticsService.getTimeline` deliberately isn't a third view of the same data - it merges
+six sources that are each, individually, already stored somewhere, but never together:
+`UserAchievement`, `UserLevelReward`, completed `Goal`s, closed `Season`s, claimed `EPIC`/
+`LEGENDARY`-difficulty `QuestCompletion`s (routine quest completions are excluded on purpose -
+that's what `feed`/`xpHistory` are for; this view is about milestones), and `JournalEntry` rows
+with a non-empty `note` (surfaced as "memories," matching the roadmap's own example of
+user-authored highlights alongside system-generated events). Each source is fetched independently
+and capped at the requested `limit` before merging and re-sorting - a deliberate tradeoff: an
+unusually dense single source (say, dozens of achievements unlocked in one binge session) could in
+theory push an older item from a quieter source below the final `limit`, but fetching everything
+unbounded to guarantee perfect merging isn't worth the cost for what's meant to be a "recent
+highlights" view, not a complete archive.
+
+The one thing on this list that doesn't already exist anywhere: character level-ups. Levels are
+always recomputed from cumulative XP, never stored as a time series (section 4) - there's no
+`LevelUpEvent` row to query. `reconstructLevelUps` replays every character-level `XPTransaction`
+in chronological order, running `calculateLevelState` on the running total after each row, and
+records the moment the level crosses a new threshold. This is deliberately scoped to the character
+only, not the 8 attributes too (the roadmap's own example timeline mentions "Physical Level 3" as
+well as "Character Level 15") - reconstructing all 8 attributes' level-up histories the same way
+would be 9x the query and computation cost for a "nice to have" addition to an already-rich list of
+five other event types; attribute-level milestones are already partially surfaced today via
+`Achievement`'s `ATTRIBUTE_LEVEL_REACHED` type (section 10) for the ones a seeded achievement
+happens to target.
+
+## 17. Keep this file in sync
 
 This file documents **why** the gameplay mechanics work the way they do, not just what the code
 currently says - the reasoning here (full XP per tagged skill/attribute, the

@@ -369,7 +369,10 @@ was explicitly reverted). Sprint 3 ("Meaningful Progression"), Sprint 4 ("Better
 Sprint 5 ("RPG Identity": character builds, specialisations, skill trees, character identity,
 seasonal progression, chapters) are all complete, each landed as two commits (backend slice, then
 frontend slice) straight to `master`. Feature 14 ("Identity System") within Sprint 5's own scope
-was deliberately deferred - see the note below.
+was deliberately deferred - see the note below. Sprint 6 ("Self-Improvement Layer": daily energy,
+recovery, daily journal, mood tracking, correlation analytics, life timeline) is in progress - its
+backend slice (`JournalEntry`, Daily Capacity, correlations, Life Timeline) is done; Feature 16
+("Recovery System") within its own scope was deliberately not built - see the note below.
 
 | Item | Status |
 | --- | --- |
@@ -391,6 +394,11 @@ was deliberately deferred - see the note below.
 | 12 — Unlockable Content | Not yet built - not part of Sprint 5's scope (the roadmap's own 7-sprint list doesn't slot this feature into any specific sprint). |
 | 13 — Seasons and Chapters | **Done** (Sprint 5 "RPG Identity", committed straight to `master`, closing out the sprint). New `Season` model - a named chapter with a focus of 1+ attributes, snapshotting level/attribute levels at start and close so progress deltas stay meaningful once closed; at most one `ACTIVE` season per user, enforced in `SeasonsService`. `Goal.seasonId` mirrors the pre-existing `Quest.goalId`/`Habit.goalId` pattern. Frontend: a new `/seasons` page (current season + history + a start-season modal), a current-season banner on `/dashboard`, and a season picker in the goal creation modal. See `gameplay-systems.md` § "Seasons and Chapters (Feature 13)". |
 | 14 — Identity System | Deliberately deferred - see the note below. |
+| 15 — Daily Energy / Capacity | **Backend done, light version** (Sprint 6 "Self-Improvement Layer", committed straight to `master`). `GET /journal/capacity` averages the last 3 days' logged mood/energy into a 0-100 score - no new model, no scheduler, and deliberately not weighted by the roadmap's full "sleep, workload, training, stress, recovery, momentum" formula (no real usage data to calibrate weights against). Never gates anything - informational only, per the roadmap's own framing. See the deliberate-deviation note below. |
+| 16 — Recovery System | Deliberately not built - see the note below. |
+| 17 — Daily Journal | **Backend done** (Sprint 6). New `JournalEntry` model - one optional-fields row per user per day (mood, energy, sleep, stress, free-text note). "Activities completed and XP earned that day" is computed live from the XP ledger, never duplicated onto the entry. `PUT /journal/:date` upserts; `GET /journal/history` lists recent days. Frontend not yet built. |
+| 18 — Mood and Energy Tracking | **Backend done** (Sprint 6). `GET /journal/correlations` - two fixed comparisons (average XP on higher- vs lower-mood days, and more- vs less-sleep days), each withheld unless there are at least 3 days of data on both sides. Framed as observations, not medical claims, per the roadmap's own explicit caution. |
+| 19 — Life Timeline | **Backend done** (Sprint 6). New `GET /analytics/timeline` merges achievement unlocks, level-reward unlocks, goal completions, season closures, notable (`EPIC`/`LEGENDARY`) quest completions, journal notes ("memories"), and reconstructed character level-ups into one chronological feed - genuinely new, not a duplicate of the existing `/analytics/feed`/`xp-history` raw-ledger views. Attribute-level level-ups are deliberately excluded - see the note below. |
 | Everything in Phases 2-4 | Not yet built - out of scope for Sprint 2. |
 
 **Deliberate deviation:** `eventId` was added as a real schema column (not in the original
@@ -529,3 +537,34 @@ dependency this sprint just created: Feature 14's "contrasting a previous chapte
 current one" reads naturally as built on top of `Season` history, which won't have any real
 history to synthesize from until seasons have actually been used for a while. Revisit once there's
 season data to work with and once Phase 4 groundwork exists.
+
+**Deliberate deviation:** Feature 15's `DAILY CAPACITY: 78/100` is described as "influenced by
+sleep, recent workload, training, stress, recovery, rest, and momentum" - seven inputs combined
+into one weighted score. What's built averages just two of them (`mood`, `energyLevel`) over a
+3-day window. The other five either aren't trackable data anywhere in this app yet (workload,
+training load, "momentum") or would need an invented weighting formula with zero real usage data
+to calibrate it against - a made-up "sleep counts for 30%, stress for 20%" split would be
+indistinguishable from a random number generator dressed up as a formula. The light version is
+honest about what it actually measures; the full version is worth building once there's a real
+dataset (i.e. once users have been logging journal entries for a while) to validate weights
+against, not before. Also per the roadmap's own explicit requirement, capacity never gates
+anything in this codebase - purely informational.
+
+**Deliberate deviation:** Feature 16 ("Recovery System") is not built this sprint. Its two stated
+halves don't leave a clean net-new backend feature: "a recovery quest can itself carry real
+rewards" is already fully possible today via the existing `Quest`/`Habit` system (a user can
+already create a "30-minute walk" quest tagged to Energy/Discipline with an XP reward - no new
+schema needed), and "recommended specifically when capacity is low" is recommendation logic that
+belongs with Phase 4's Feature 20 ("Personalised Recommendations"), not this sprint. Building a
+recommendation engine now, before Phase 4's groundwork exists, would mean either a throwaway
+one-off or prematurely committing to Phase 4's design before it's been thought through.
+
+**Deliberate deviation:** Feature 19's example timeline mixes character milestones ("Character
+Level 15") with attribute milestones ("Physical Level 3"). The built `getTimeline` only
+reconstructs character level-ups, not all 8 attributes' - replaying every attribute's XP history
+the same way `reconstructLevelUps` does for the character would be roughly 9x the query and
+computation cost for what's already a six-source merge, and attribute-level milestones are
+already partially surfaced today via `Achievement`'s `ATTRIBUTE_LEVEL_REACHED` requirement type for
+whichever ones a seeded achievement happens to target (e.g. "Getting Physical" at Physical Level
+2). A full per-attribute timeline reconstruction is a reasonable future addition once there's
+demand for it, not a gap worth the cost for this first pass.

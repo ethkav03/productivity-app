@@ -1422,6 +1422,142 @@ Array<{
 }>
 ```
 
+### `GET /analytics/timeline`
+
+"Life Timeline" (Sprint 6, Feature 19) - a chronological feed of notable moments merged from six
+sources, newest first. Deliberately **not** every quest/habit completion - that's what `feed`/
+`xp-history` above already show; this is milestones, not the routine ledger. Each source is capped
+at `limit` rows independently, then merged and re-sorted (a very dense single source could in
+theory still push an older item from a quieter source below the final `limit` after merging).
+
+Query params:
+
+| Param   | Type   | Notes                                          |
+| ------- | ------ | ----------------------------------------------- |
+| `limit` | number | Optional, default `50`. Clamped to `[1, 100]`.  |
+
+Response: `200 OK`:
+
+```ts
+Array<{
+  type: 'ACHIEVEMENT' | 'LEVEL_REWARD' | 'GOAL_COMPLETED' | 'SEASON_CLOSED' | 'NOTABLE_QUEST' | 'MEMORY' | 'LEVEL_UP';
+  date: string;
+  title: string;
+  description: string | null;
+}>
+```
+
+Per `type`: `ACHIEVEMENT`/`LEVEL_REWARD` - an unlock, `title`/`description` from the definition.
+`GOAL_COMPLETED` - a completed goal's title. `SEASON_CLOSED` - a closed season's title, with the
+character level reached by then as `description`. `NOTABLE_QUEST` - a claimed `EPIC`- or
+`LEGENDARY`-difficulty quest completion, `description` is the difficulty. `MEMORY` - a
+`JournalEntry` with a non-empty `note`, `title` is the note text itself, dated at that entry's
+`date` (noon UTC, to sort sensibly among same-day timestamped events). `LEVEL_UP` - a
+reconstructed character level-up (see `docs/gameplay-systems.md` for how, since levels aren't
+stored as a history anywhere) - attribute-level-ups are not included, only the character.
+
+---
+
+## Journal (`/journal`)
+
+"Daily Journal" / "Mood and Energy Tracking" (Sprint 6, Features 17-18). All routes require a
+Bearer token.
+
+```ts
+interface JournalEntry {
+  id: string;
+  userId: string;
+  date: string; // YYYY-MM-DD (UTC day key)
+  mood: number | null;        // 1-5
+  energyLevel: number | null; // 1-5
+  sleepHours: number | null;
+  stressLevel: number | null; // 1-5
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+### `GET /journal`
+
+The entry for a given day, plus that day's activity/XP summary computed live from the character-
+level XP ledger (not stored on the entry).
+
+Query params: `date` (optional, `YYYY-MM-DD`, defaults to today - UTC).
+
+Response: `200 OK`:
+
+```ts
+{
+  entry: JournalEntry | null;
+  activitiesCompleted: number; // count of character-level XPTransaction rows that day
+  xpEarned: number;            // sum of their amounts
+}
+```
+
+### `PUT /journal/:date`
+
+Upsert (create or update) the entry for a given day - idempotent, safe to call repeatedly as the
+user fills in fields over the course of a day.
+
+Request body (`UpsertJournalEntryDto`, all fields optional):
+
+```ts
+{
+  mood?: number;        // int, 1-5
+  energyLevel?: number; // int, 1-5
+  sleepHours?: number;  // 0-24
+  stressLevel?: number; // int, 1-5
+  note?: string;        // max 2000 chars
+}
+```
+
+Response: `200 OK` with the created/updated `JournalEntry`.
+
+Errors: `400 Bad Request` if any field is out of range.
+
+### `GET /journal/history`
+
+List the caller's entries for the last N days, newest first.
+
+Query params: `days` (optional, default `30`).
+
+Response: `200 OK`, array of `JournalEntry` (only days with an actual entry - no gap-filled `null`
+placeholders for undogged days).
+
+### `GET /journal/capacity`
+
+"Daily Energy / Capacity" (Sprint 6, Feature 15, light version) - a 0-100 score averaged from the
+last 3 days' logged `mood`/`energyLevel` (both 1-5 scales, blended into one average and rescaled).
+No new model, no scheduler; deliberately not influenced by "workload, training, stress, recovery,
+momentum" the way the roadmap's full version is - see `docs/gameplay-systems.md`.
+
+Response: `200 OK`:
+
+```ts
+{
+  score: number | null; // null if no mood/energy logged in the last 3 days
+  daysConsidered: number;
+}
+```
+
+### `GET /journal/correlations`
+
+"Mood and Energy Tracking" (Feature 18) - a couple of fixed, honest comparisons over the caller's
+full journal history: average character XP earned on higher-mood (`mood >= 4`) vs lower-mood days,
+and on more-sleep (`sleepHours >= 7`) vs less-sleep days. Each comparison requires at least 3 days
+on **both** sides or it's omitted (`null`) rather than shown with a misleadingly tiny sample - this
+is presented as an observation from the user's own data, not a medical or scientific claim.
+
+Response: `200 OK`:
+
+```ts
+{
+  moodVsXp: { higherGroupAverageXp: number; lowerGroupAverageXp: number; higherGroupDays: number; lowerGroupDays: number } | null;
+  sleepVsXp: { higherGroupAverageXp: number; lowerGroupAverageXp: number; higherGroupDays: number; lowerGroupDays: number } | null;
+}
+```
+
 ---
 
 ## Friends (`/friends`)

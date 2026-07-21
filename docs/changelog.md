@@ -4,6 +4,59 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-21 — Settings moved into the account menu
+
+A direct, standalone request mid-session: moved the "Settings" link out of the main sidebar nav
+and into the `Topbar` account dropdown, alongside "Admin Dashboard" and "Log out" - it's
+account-level configuration, not a gameplay section, so it doesn't need a permanent sidebar slot.
+Verified via Playwright (light/dark): confirmed it no longer appears in the sidebar, appears in
+the dropdown, and navigates correctly.
+
+## 2026-07-21 — Daily Journal, Capacity, Correlations, and Life Timeline (backend)
+
+Backend slice of "Sprint 6: Self-Improvement Layer" (`docs/feature-roadmap.md`) - Phase 3 Features
+15, 17, 18, 19 (Feature 16, "Recovery System," deliberately not built this sprint - both its
+halves were already covered by existing systems or belong with Phase 4). Sixth sprint committing
+straight to `master`.
+
+Added `JournalEntry` (migration `20260721100000_daily_journal`): one optional-fields row per user
+per calendar day - mood, energy level, sleep hours, stress level, a free-text note - upserted via
+`PUT /journal/:date`, keyed on a `[userId, date]` unique constraint mirroring
+`HabitCompletion.periodKey`'s day-key convention. Deliberately does **not** store "activities
+completed" or "XP earned that day" on the entry, even though the roadmap's own Feature 17
+description lists both - `JournalService.getDay` computes them live from the character-level XP
+ledger instead, the same derive-don't-duplicate approach already used for `Goal.progressPercent`
+and `Habit.completedToday`.
+
+Built two lighter-than-roadmap features on top of that data: `GET /journal/capacity` ("Daily
+Energy," Feature 15) averages the last 3 days' mood/energy into a 0-100 score - not the roadmap's
+full seven-input weighted formula, since five of those inputs don't exist as trackable data yet
+and inventing weights with no real usage data to validate them against would be guesswork, not a
+formula. `GET /journal/correlations` (Feature 18) computes two fixed, honest comparisons (XP on
+higher- vs lower-mood days, more- vs less-sleep days), each withheld unless there's enough data on
+both sides - framed as observations from the user's own data, not medical claims, per the
+roadmap's own explicit caution.
+
+Added `GET /analytics/timeline` (Feature 19, "Life Timeline") to the existing `AnalyticsModule`
+rather than a new module - it merges six sources (achievement unlocks, level-reward unlocks, goal
+completions, season closures, notable `EPIC`/`LEGENDARY` quest completions, and journal notes as
+"memories") plus a genuinely new one: reconstructed character level-ups, replayed from the
+character-level XP ledger since levels have never been stored as a history anywhere in this app.
+Deliberately excludes routine quest/habit completions (already covered by the existing `feed`/
+`xp-history` endpoints) and attribute-level level-ups (9x the reconstruction cost for a "nice to
+have" - see the Feature 19 deviation note).
+
+Cleaned up a real backlog of orphaned dev-server processes (17 stray `node.exe`s) that had
+accumulated from repeated restarts across this session's Docker instability - unrelated to this
+feature, noted here for the record.
+
+Verified against a real running dev server: logging a day, confirming the day summary picks up XP
+earned after the fact, upserting without duplicating, backdating a week of high- and low-mood/sleep
+entries via direct Prisma access to exercise capacity and correlations, validation rejecting an
+out-of-range mood, and a timeline query confirming all four new-ish event types appear
+(achievement, level-up, memory, notable quest) in descending chronological order - 20 assertions,
+all passing.
+
 ## 2026-07-21 — RPG Identity: character builds, skill tiers, seasons UI (frontend)
 
 Frontend slice of "Sprint 5: RPG Identity" - Phase 2 Features 9, 10, 13, closing out the sprint

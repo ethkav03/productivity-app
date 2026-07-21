@@ -18,6 +18,7 @@ import { QuestsModule } from './quests/quests.module';
 import { HabitsModule } from './habits/habits.module';
 import { GoalsModule } from './goals/goals.module';
 import { SeasonsModule } from './seasons/seasons.module';
+import { JournalModule } from './journal/journal.module';
 import { ChallengesModule } from './challenges/challenges.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { FriendsModule } from './friends/friends.module';
@@ -43,6 +44,7 @@ import { AdminModule } from './admin/admin.module';
     HabitsModule,
     GoalsModule,
     SeasonsModule,
+    JournalModule,
     ChallengesModule,
     AnalyticsModule,
     FriendsModule,
