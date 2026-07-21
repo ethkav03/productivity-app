@@ -380,7 +380,9 @@ A single shared `NAV_ITEMS` array consumed by both `Sidebar` and `MobileNav`:
 | Achievements | `/achievements` | `Award` |
 | Leaderboard | `/leaderboard` | `Crown` |
 | Analytics | `/analytics` | `BarChart3` |
-| Settings | `/settings` | `Settings` |
+
+`/settings` is deliberately not in this list - it's reachable only from the `Topbar` account menu (see
+below), not the main sidebar, matching where "Admin Dashboard" already lived.
 
 ### `Topbar` (`topbar.tsx`)
 
@@ -396,9 +398,11 @@ Renders `null` entirely if there is no authenticated `user`. Otherwise:
   full-screen fixed overlay) listing all notifications with title/message/relative timestamp, a
   "Mark all read" action (`markAllNotificationsRead`), and per-notification click-to-mark-read
   (`markNotificationRead`) - both invalidate the `['notifications']` query on success.
-- **Account menu**: a user-icon button opening a dropdown showing the username, a conditional
-  "Admin Dashboard" link to `/admin` (rendered only when `user.isAdmin`), and a "Log out" action
-  that calls `useAuth().logout()`.
+- **Account menu**: a user-icon button opening a dropdown showing the username, a "Settings" link
+  to `/settings`, a conditional "Admin Dashboard" link to `/admin` (rendered only when
+  `user.isAdmin`), and a "Log out" action that calls `useAuth().logout()`. Settings moved here from
+  the main sidebar nav - it's account-level configuration, not a gameplay section, so it groups
+  naturally with the other account-menu actions rather than taking up a permanent sidebar slot.
 
 ## Keeping this file in sync
 
