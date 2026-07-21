@@ -62,6 +62,7 @@ const SOURCE_TYPE_LABELS: Record<XPSourceType, string> = {
   QUEST_COMPLETION: 'Quest completed',
   HABIT_COMPLETION: 'Habit completed',
   GOAL_COMPLETION: 'Goal completed',
+  MILESTONE_COMPLETION: 'Milestone completed',
   ACHIEVEMENT_BONUS: 'Achievement bonus',
   CORRECTION: 'Correction',
 };

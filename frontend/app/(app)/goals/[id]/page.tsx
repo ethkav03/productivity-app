@@ -5,9 +5,10 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { ArrowLeft, CheckCircle2, Target, Trash2 } from 'lucide-react';
-import { deleteGoal, getGoal, progressGoal } from '@/lib/api/goals';
-import { GoalStatus, GoalType, QuestDifficulty, QuestStatus } from '@/lib/types';
+import { ArrowLeft, Check, CheckCircle2, Flag, Loader2, Plus, Repeat, Target, Trash2 } from 'lucide-react';
+import clsx from 'clsx';
+import { addMilestone, deleteGoal, deleteMilestone, getGoal, progressGoal, updateMilestone } from '@/lib/api/goals';
+import { GoalMilestone, GoalStatus, GoalType, QuestDifficulty, QuestStatus } from '@/lib/types';
 import { getApiErrorMessage } from '@/lib/api-client';
 import { useAuth } from '@/hooks/use-auth';
 import { useCelebration } from '@/hooks/use-celebration';
@@ -53,6 +54,8 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
   const [progressValue, setProgressValue] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [milestoneTitle, setMilestoneTitle] = useState('');
+  const [milestoneXpReward, setMilestoneXpReward] = useState('');
 
   const {
     data: goal,
@@ -90,6 +93,44 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
       setFormError(getApiErrorMessage(error, 'Could not save progress'));
     },
   });
+
+  const addMilestoneMutation = useMutation({
+    mutationFn: () =>
+      addMilestone(params.id, {
+        title: milestoneTitle.trim(),
+        xpReward: milestoneXpReward.trim() ? Number(milestoneXpReward) : undefined,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['goals', params.id] });
+      setMilestoneTitle('');
+      setMilestoneXpReward('');
+    },
+  });
+
+  const toggleMilestoneMutation = useMutation({
+    mutationFn: ({ milestoneId, completed }: { milestoneId: string; completed: boolean }) =>
+      updateMilestone(params.id, milestoneId, { completed }),
+    onSuccess: async (data) => {
+      queryClient.invalidateQueries({ queryKey: ['goals', params.id] });
+      if (data.completion) {
+        await refreshUser();
+        celebrate(data.completion);
+      }
+    },
+  });
+
+  const deleteMilestoneMutation = useMutation({
+    mutationFn: (milestoneId: string) => deleteMilestone(params.id, milestoneId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['goals', params.id] });
+    },
+  });
+
+  function handleAddMilestone(event: FormEvent) {
+    event.preventDefault();
+    if (!milestoneTitle.trim()) return;
+    addMilestoneMutation.mutate();
+  }
 
   async function handleDelete() {
     if (!window.confirm('Delete this goal? This cannot be undone.')) return;
@@ -175,11 +216,69 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
               {goal.currentValue}/{goal.targetValue} {goal.unit}
             </p>
           )}
+          {goal.type === 'COMPLETION' && (
+            <p className="mt-1.5 text-xs text-muted">
+              {goal.currentValue}/{goal.targetValue} linked quests completed
+            </p>
+          )}
         </div>
 
         {goal.targetDate && (
           <p className="mt-4 text-xs text-muted">Target date: {format(new Date(goal.targetDate), 'MMM d, yyyy')}</p>
         )}
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Milestones</CardTitle>
+        </CardHeader>
+        {goal.milestones.length === 0 ? (
+          <p className="text-sm text-muted">No milestones yet - break this goal into smaller checkpoints below.</p>
+        ) : (
+          <ul className="space-y-2">
+            {goal.milestones.map((milestone) => (
+              <MilestoneRow
+                key={milestone.id}
+                milestone={milestone}
+                onToggle={() =>
+                  toggleMilestoneMutation.mutate({ milestoneId: milestone.id, completed: !milestone.completed })
+                }
+                isToggling={
+                  toggleMilestoneMutation.isPending && toggleMilestoneMutation.variables?.milestoneId === milestone.id
+                }
+                onDelete={() => deleteMilestoneMutation.mutate(milestone.id)}
+                isDeleting={deleteMilestoneMutation.isPending && deleteMilestoneMutation.variables === milestone.id}
+              />
+            ))}
+          </ul>
+        )}
+
+        <form onSubmit={handleAddMilestone} className="mt-4 flex flex-wrap items-end gap-2 border-t border-border pt-4">
+          <div className="min-w-[10rem] flex-1">
+            <Label htmlFor="milestone-title">New milestone</Label>
+            <Input
+              id="milestone-title"
+              placeholder="e.g. Reach 100kg on deadlift"
+              value={milestoneTitle}
+              onChange={(event) => setMilestoneTitle(event.target.value)}
+            />
+          </div>
+          <div className="w-24">
+            <Label htmlFor="milestone-xp">XP (optional)</Label>
+            <Input
+              id="milestone-xp"
+              type="number"
+              min={0}
+              placeholder="0"
+              value={milestoneXpReward}
+              onChange={(event) => setMilestoneXpReward(event.target.value)}
+            />
+          </div>
+          <Button type="submit" size="sm" loading={addMilestoneMutation.isPending} disabled={!milestoneTitle.trim()}>
+            <Plus className="h-4 w-4" />
+            Add
+          </Button>
+        </form>
       </Card>
 
       <Card>
@@ -206,6 +305,32 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
         )}
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Linked Habits</CardTitle>
+        </CardHeader>
+        {!goal.habits || goal.habits.length === 0 ? (
+          <p className="text-sm text-muted">No habits linked yet - add some from the Habits page.</p>
+        ) : (
+          <div className="space-y-2">
+            {goal.habits.map((habit) => (
+              <div
+                key={habit.id}
+                className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2"
+              >
+                <span className="flex items-center gap-2 truncate text-sm text-foreground">
+                  <Repeat className="h-3.5 w-3.5 shrink-0 text-muted" />
+                  {habit.title}
+                </span>
+                <Badge variant={habit.isActive ? 'primary' : 'outline'} className="shrink-0">
+                  {habit.isActive ? 'Active' : 'Paused'}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
       {goal.status === 'ACTIVE' ? (
         <Card>
           <CardHeader>
@@ -217,6 +342,11 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
               <CheckCircle2 className="h-4 w-4" />
               Mark Complete
             </Button>
+          ) : goal.type === 'COMPLETION' ? (
+            <p className="text-sm text-muted">
+              Progress updates automatically as linked quests are completed - link a quest to this
+              goal from the Quests page to make it count.
+            </p>
           ) : (
             <form onSubmit={handleNumericSubmit} className="space-y-3">
               <div>
@@ -246,5 +376,59 @@ export default function GoalDetailPage({ params }: { params: { id: string } }) {
         </div>
       )}
     </div>
+  );
+}
+
+interface MilestoneRowProps {
+  milestone: GoalMilestone;
+  onToggle: () => void;
+  isToggling: boolean;
+  onDelete: () => void;
+  isDeleting: boolean;
+}
+
+function MilestoneRow({ milestone, onToggle, isToggling, onDelete, isDeleting }: MilestoneRowProps) {
+  return (
+    <li className="flex items-center gap-3 rounded-lg border border-border px-3 py-2">
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={isToggling}
+        aria-label={milestone.completed ? `Undo ${milestone.title}` : `Mark ${milestone.title} complete`}
+        className={clsx(
+          'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-colors disabled:cursor-not-allowed',
+          milestone.completed
+            ? 'border-success bg-success/15 text-success'
+            : 'border-border text-transparent hover:border-primary hover:text-primary/40',
+        )}
+      >
+        {isToggling ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted" /> : <Check className="h-3.5 w-3.5" />}
+      </button>
+
+      <div className="min-w-0 flex-1">
+        <p className={clsx('flex items-center gap-2 text-sm font-medium', milestone.completed ? 'text-muted line-through' : 'text-foreground')}>
+          <Flag className="h-3.5 w-3.5 shrink-0 text-muted" />
+          {milestone.title}
+        </p>
+        {milestone.description && <p className="mt-0.5 text-xs text-muted">{milestone.description}</p>}
+      </div>
+
+      {milestone.xpReward > 0 && (
+        <Badge variant="accent" className="shrink-0">
+          +{milestone.xpReward} XP
+        </Badge>
+      )}
+
+      <button
+        type="button"
+        onClick={onDelete}
+        disabled={isDeleting}
+        aria-label={`Delete ${milestone.title}`}
+        title="Delete milestone"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-danger/10 hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+      </button>
+    </li>
   );
 }

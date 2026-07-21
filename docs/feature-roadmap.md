@@ -366,11 +366,10 @@ git branch (`feature/level-gated-quests`, `feature/quest-board`,
 `feature/daily-weekly-challenges`), each merged into `main` when done and verified. Starting with
 Sprint 3, the workflow moved to committing directly to `master` (the branch-per-feature pattern
 was explicitly reverted). Sprint 3 ("Meaningful Progression": level-up rewards, titles, perks,
-unlockable quests, skill/attribute detail pages) is complete, landed as two commits (backend
-slice, then frontend slice) straight to `master`. Sprint 4 ("Better Goals": goal milestones, goal
-decomposition, goal↔quest relationships, goal↔habit relationships, goal completion rewards) is in
-progress - its backend slice (milestones, `Habit.goalId`, automatic `COMPLETION`-type progress
-sync) is done.
+unlockable quests, skill/attribute detail pages) and Sprint 4 ("Better Goals": goal milestones,
+goal decomposition, goal↔quest relationships, goal↔habit relationships, goal completion rewards)
+are both complete, each landed as two commits (backend slice, then frontend slice) straight to
+`master`.
 
 | Item | Status |
 | --- | --- |
@@ -385,7 +384,7 @@ sync) is done.
 | 4 — XP Balancing and Diminishing Returns | Not yet built - not part of Sprint 2's scope (roadmap's own sprint grouping puts it under "Quest Progression" but it wasn't selected for this pass). |
 | 6 — Level-Up Rewards | **Done** (Sprint 3, committed straight to `master` - see "Chosen entry point" above). `LevelReward` + `UserLevelReward`, data-driven `LevelRewardsService.checkAndUnlock` mirroring the achievement engine, 5 of the roadmap's 8 reward types built (`TITLE`, `BADGE`, `STREAK_PROTECTION`, `FEATURE_UNLOCK`, `QUEST`), equippable titles via a `PATCH /users/me` field + a Settings picker + a Topbar display, and a "Level Rewards" tab on `/achievements`. See `gameplay-systems.md` § "Level-up rewards (Feature 6)" and the deliberate-deviation note below. |
 | 7 — Skill and Attribute Detail Pages | **Done** (Sprint 3). New `/attributes/[id]` route (didn't exist at all before this sprint): level/XP header, nested skills, an "Unlocked Rewards" section, XP growth chart, recent activity. `/skills/[id]` gained a "What contributes to this skill?" section (quests/habits/goals currently tagged with it, filtered client-side over existing list endpoints - no new backend endpoint needed) and its "Part of {attribute}" link now actually links to the attribute page instead of `/skills`. See `docs/frontend.md`'s route table. |
-| 8 — Intelligent Goal Decomposition | **Backend done** (Sprint 4 "Better Goals", committed straight to `master`). `GoalMilestone` (ordered checklist items, optional small XP reward) and `Habit.goalId` (mirroring the pre-existing `Quest.goalId`) landed; a `COMPLETION`-type goal's progress now syncs automatically from linked quest completions instead of requiring a manual re-count. The roadmap's "intelligent"/AI-driven decomposition itself is out of scope - see the deliberate-deviation note below. Frontend (goal detail page sections, habit modal goal picker) not yet built. |
+| 8 — Intelligent Goal Decomposition | **Done** (Sprint 4 "Better Goals", committed straight to `master`, closing out the sprint). `GoalMilestone` (ordered checklist items, optional small XP reward) and `Habit.goalId` (mirroring the pre-existing `Quest.goalId`) landed; a `COMPLETION`-type goal's progress now syncs automatically from linked quest completions instead of requiring a manual re-count. Frontend: the goal detail page gained a Milestones card and a Linked Habits card, and swapped its manual numeric input for a read-only note on `COMPLETION`-type goals; the habit modal gained a Goal picker mirroring the quest modal's. The roadmap's "intelligent"/AI-driven decomposition itself is out of scope - see the deliberate-deviation note below. |
 | Everything in Phases 2-4 | Not yet built - out of scope for Sprint 2. |
 
 **Deliberate deviation:** `eventId` was added as a real schema column (not in the original

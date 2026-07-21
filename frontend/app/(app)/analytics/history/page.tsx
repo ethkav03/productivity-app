@@ -8,6 +8,7 @@ import {
   ArrowLeft,
   CheckSquare,
   Compass,
+  Flag,
   History,
   Inbox,
   LucideIcon,
@@ -36,6 +37,7 @@ const SOURCE_FILTERS: Array<[SourceFilter, string]> = [
   ['QUEST_COMPLETION', 'Quests'],
   ['HABIT_COMPLETION', 'Habits'],
   ['GOAL_COMPLETION', 'Goals'],
+  ['MILESTONE_COMPLETION', 'Milestones'],
   ['ACHIEVEMENT_BONUS', 'Achievements'],
   ['CORRECTION', 'Corrections'],
 ];
@@ -44,6 +46,7 @@ const SOURCE_ICON: Record<XPSourceType, LucideIcon> = {
   QUEST_COMPLETION: CheckSquare,
   HABIT_COMPLETION: Repeat,
   GOAL_COMPLETION: Target,
+  MILESTONE_COMPLETION: Flag,
   ACHIEVEMENT_BONUS: Trophy,
   CORRECTION: ShieldCheck,
 };
@@ -62,6 +65,8 @@ function humanizeSourceType(sourceType: XPSourceType): string {
       return 'Habit completed';
     case 'GOAL_COMPLETION':
       return 'Goal completed';
+    case 'MILESTONE_COMPLETION':
+      return 'Milestone completed';
     case 'ACHIEVEMENT_BONUS':
       return 'Achievement bonus';
     case 'CORRECTION':

@@ -6,7 +6,7 @@ import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import clsx from 'clsx';
-import { Check, Flame, Loader2, Pause, Plus, Trash2 } from 'lucide-react';
+import { Check, Flame, Loader2, Pause, Plus, Target, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -24,6 +24,7 @@ import { getApiErrorMessage } from '@/lib/api-client';
 import { CreateHabitInput, completeHabit, createHabit, deleteHabit, getHabits, updateHabit } from '@/lib/api/habits';
 import { getSkills } from '@/lib/api/skills';
 import { getAttributes } from '@/lib/api/attributes';
+import { getGoals } from '@/lib/api/goals';
 import { Habit, HabitFrequency } from '@/lib/types';
 import { RewardBundleEditor, RewardBundleValue } from '@/components/ui/reward-bundle-editor';
 
@@ -62,6 +63,7 @@ const habitFormSchema = z
       .number({ invalid_type_error: 'Enter a number' })
       .int('Whole numbers only')
       .min(1, 'Must be at least 1'),
+    goalId: z.string().optional(),
     skillIds: z.array(z.string()),
   })
   .superRefine((values, ctx) => {
@@ -80,6 +82,7 @@ const DEFAULT_FORM_VALUES: HabitFormValues = {
   timesPerWeek: 3,
   timeOfDay: '',
   xpReward: 10,
+  goalId: '',
   skillIds: [],
 };
 
@@ -93,6 +96,7 @@ export default function HabitsPage() {
   const habitsQuery = useQuery({ queryKey: ['habits'], queryFn: getHabits });
   const skillsQuery = useQuery({ queryKey: ['skills'], queryFn: getSkills });
   const attributesQuery = useQuery({ queryKey: ['attributes'], queryFn: getAttributes, enabled: isModalOpen });
+  const goalsQuery = useQuery({ queryKey: ['goals', 'all'], queryFn: () => getGoals(), enabled: isModalOpen });
 
   const [rewardBundle, setRewardBundle] = useState<RewardBundleValue>(EMPTY_REWARD_BUNDLE);
 
@@ -181,6 +185,7 @@ export default function HabitsPage() {
       title: values.title.trim(),
       frequency: values.frequency,
       xpReward: values.xpReward,
+      goalId: values.goalId ? values.goalId : undefined,
       skillIds: values.skillIds,
       skillRewardOverrides: skillRewardOverrides.length ? skillRewardOverrides : undefined,
       attributeBonuses: rewardBundle.attributeBonuses.length ? rewardBundle.attributeBonuses : undefined,
@@ -390,6 +395,18 @@ export default function HabitsPage() {
           </div>
 
           <div>
+            <Label htmlFor="habit-goal">Goal</Label>
+            <Select id="habit-goal" {...register('goalId')}>
+              <option value="">No goal</option>
+              {(goalsQuery.data ?? []).map((goal) => (
+                <option key={goal.id} value={goal.id}>
+                  {goal.title}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <div>
             <Label>Skills</Label>
             {skillOptions.length > 0 ? (
               <Controller
@@ -449,6 +466,12 @@ function HabitRow({ habit, onComplete, isCompleting, onPause, isPausing, onDelet
         <div className="flex flex-wrap items-center gap-2">
           <p className={clsx('text-sm font-medium', done ? 'text-muted line-through' : 'text-foreground')}>{habit.title}</p>
           <Badge variant="accent">+{habit.xpReward} XP</Badge>
+          {habit.goal && (
+            <Badge variant="outline">
+              <Target className="h-3 w-3" />
+              part of: {habit.goal.title}
+            </Badge>
+          )}
         </div>
         <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
           <Flame className={clsx('h-3.5 w-3.5', habit.currentStreak > 0 ? 'text-warning' : 'text-muted')} />

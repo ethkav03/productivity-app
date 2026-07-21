@@ -110,6 +110,18 @@ export interface ActivityAttributeBonus {
 export type GoalType = 'NUMERIC' | 'COMPLETION' | 'BINARY';
 export type GoalStatus = 'ACTIVE' | 'COMPLETED' | 'ABANDONED';
 
+export interface GoalMilestone {
+  id: string;
+  goalId: string;
+  title: string;
+  description: string | null;
+  order: number;
+  xpReward: number;
+  completed: boolean;
+  completedAt: string | null;
+  createdAt: string;
+}
+
 export interface Goal {
   id: string;
   userId: string;
@@ -130,7 +142,9 @@ export interface Goal {
   skills: Skill[];
   skillRewardOverrides: SkillRewardOverride[];
   attributeBonuses: ActivityAttributeBonus[];
+  milestones: GoalMilestone[];
   quests?: Quest[];
+  habits?: Habit[];
   progressPercent: number;
 }
 
@@ -231,6 +245,7 @@ export type HabitFrequency = 'DAILY' | 'DAYS_OF_WEEK' | 'TIMES_PER_WEEK' | 'MONT
 export interface Habit {
   id: string;
   userId: string;
+  goalId: string | null;
   title: string;
   description: string | null;
   frequency: HabitFrequency;
@@ -246,6 +261,7 @@ export interface Habit {
   skills: Skill[];
   skillRewardOverrides: SkillRewardOverride[];
   attributeBonuses: ActivityAttributeBonus[];
+  goal: { id: string; title: string } | null;
   completedToday: boolean;
 }
 
@@ -327,6 +343,7 @@ export type XPSourceType =
   | 'HABIT_COMPLETION'
   | 'GOAL_COMPLETION'
   | 'ACHIEVEMENT_BONUS'
+  | 'MILESTONE_COMPLETION'
   | 'CORRECTION';
 
 export interface XPTransaction {

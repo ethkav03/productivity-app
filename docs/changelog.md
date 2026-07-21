@@ -4,6 +4,35 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-21 — Better Goals: milestones and auto-progress (frontend)
+
+Frontend slice of "Sprint 4: Better Goals" - Phase 1 Feature 8, closing out the sprint. Second
+commit on top of the backend slice from the previous day.
+
+Goal detail page gained a **Milestones** card: an ordered checklist with an inline add-form
+(title + optional XP reward), a per-item toggle button (mirrors the Habits page's completion
+circle), and a delete button. Toggling a milestone complete calls `useCelebration()` only when the
+response includes a `completion` - a zero-`xpReward` milestone's response has none, so checking
+off a plain checklist item stays silent, matching the backend's own "no XP call for a zero
+reward" rule.
+
+Also gained a **Linked Habits** card, mirroring the pre-existing Linked Quests card. For
+`COMPLETION`-type goals, the "Log Progress" card's manual numeric input (a carryover from sharing
+`NUMERIC`'s form, which never actually matched the read-only `progressPercent` shown above it) is
+now a read-only note explaining that progress updates automatically - since it actually does, as
+of yesterday's backend slice.
+
+Habit creation modal gained a Goal picker, field-for-field identical to the quest modal's; a habit
+linked to a goal shows a "part of: {goal}" badge on its row, matching how linked quests already
+display theirs.
+
+Verified against real running dev servers - after this session's machine went idle overnight,
+restarted Docker Desktop, the `db` container, and both dev servers from scratch. A Playwright pass
+(light and dark themes) drove the actual UI: creating a habit linked to a goal via the modal,
+adding and completing a milestone with an XP reward, and completing a quest linked to a
+`COMPLETION`-type goal to confirm the goal auto-completed without any manual progress call - 18
+assertions, all passing.
+
 ## 2026-07-20 — Better Goals: milestones and auto-progress (backend)
 
 Backend slice of "Sprint 4: Better Goals" (`docs/feature-roadmap.md`) - Phase 1 Feature 8.

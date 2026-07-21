@@ -14,6 +14,7 @@ export interface CreateHabitInput {
   timesPerWeek?: number;
   timeOfDay?: string;
   xpReward?: number;
+  goalId?: string;
   skillIds?: string[];
   skillRewardOverrides?: SkillRewardOverride[];
   attributeBonuses?: Array<{ attributeId: string; amount: number }>;
