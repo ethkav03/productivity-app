@@ -12,6 +12,7 @@ import { format } from 'date-fns';
 import { createGoal, getGoals, CreateGoalInput } from '@/lib/api/goals';
 import { getSkills } from '@/lib/api/skills';
 import { getAttributes } from '@/lib/api/attributes';
+import { getSeasons } from '@/lib/api/seasons';
 import { Goal, GoalStatus, GoalType } from '@/lib/types';
 import { getApiErrorMessage } from '@/lib/api-client';
 import { AttributeDots } from '@/components/ui/attribute-dots';
@@ -60,6 +61,7 @@ const createGoalSchema = z
     targetValue: z.string().optional(),
     unit: z.string().max(30, 'Keep it under 30 characters').optional(),
     targetDate: z.string().optional(),
+    seasonId: z.string().optional(),
     skillIds: z.array(z.string()).optional(),
   })
   .superRefine((data, ctx) => {
@@ -83,6 +85,7 @@ const DEFAULT_FORM_VALUES: CreateGoalFormValues = {
   targetValue: '',
   unit: '',
   targetDate: '',
+  seasonId: '',
   skillIds: [],
 };
 
@@ -103,6 +106,7 @@ export default function GoalsPage() {
 
   const { data: skills } = useQuery({ queryKey: ['skills'], queryFn: getSkills });
   const { data: attributes } = useQuery({ queryKey: ['attributes'], queryFn: getAttributes, enabled: modalOpen });
+  const { data: seasons } = useQuery({ queryKey: ['seasons', 'all'], queryFn: () => getSeasons(), enabled: modalOpen });
 
   const [rewardBundle, setRewardBundle] = useState<RewardBundleValue>(EMPTY_REWARD_BUNDLE);
 
@@ -140,6 +144,7 @@ export default function GoalsPage() {
         category: values.category?.trim() ? values.category.trim() : undefined,
         type: values.type,
         targetDate: values.targetDate?.trim() ? values.targetDate : undefined,
+        seasonId: values.seasonId ? values.seasonId : undefined,
         skillIds: values.skillIds,
         skillRewardOverrides: skillRewardOverrides.length ? skillRewardOverrides : undefined,
         attributeBonuses: rewardBundle.attributeBonuses.length ? rewardBundle.attributeBonuses : undefined,
@@ -303,6 +308,18 @@ export default function GoalsPage() {
           <div>
             <Label htmlFor="targetDate">Target date</Label>
             <Input id="targetDate" type="date" {...register('targetDate')} />
+          </div>
+
+          <div>
+            <Label htmlFor="seasonId">Season</Label>
+            <Select id="seasonId" {...register('seasonId')}>
+              <option value="">No season</option>
+              {(seasons ?? []).map((season) => (
+                <option key={season.id} value={season.id}>
+                  {season.title}
+                </option>
+              ))}
+            </Select>
           </div>
 
           {skills && skills.length > 0 && (

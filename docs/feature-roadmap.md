@@ -365,13 +365,11 @@ Phase 1+ feature. Sprint 1 and Sprint 2 (Quest Progression) were built one roadm
 git branch (`feature/level-gated-quests`, `feature/quest-board`,
 `feature/daily-weekly-challenges`), each merged into `main` when done and verified. Starting with
 Sprint 3, the workflow moved to committing directly to `master` (the branch-per-feature pattern
-was explicitly reverted). Sprint 3 ("Meaningful Progression": level-up rewards, titles, perks,
-unlockable quests, skill/attribute detail pages) and Sprint 4 ("Better Goals": goal milestones,
-goal decomposition, goal↔quest relationships, goal↔habit relationships, goal completion rewards)
-are both complete, each landed as two commits (backend slice, then frontend slice) straight to
-`master`. Sprint 5 ("RPG Identity": character builds, specialisations, skill trees, character
-identity, seasonal progression, chapters) is in progress - its backend slice (the `Season` model)
-is done.
+was explicitly reverted). Sprint 3 ("Meaningful Progression"), Sprint 4 ("Better Goals"), and
+Sprint 5 ("RPG Identity": character builds, specialisations, skill trees, character identity,
+seasonal progression, chapters) are all complete, each landed as two commits (backend slice, then
+frontend slice) straight to `master`. Feature 14 ("Identity System") within Sprint 5's own scope
+was deliberately deferred - see the note below.
 
 | Item | Status |
 | --- | --- |
@@ -387,11 +385,11 @@ is done.
 | 6 — Level-Up Rewards | **Done** (Sprint 3, committed straight to `master` - see "Chosen entry point" above). `LevelReward` + `UserLevelReward`, data-driven `LevelRewardsService.checkAndUnlock` mirroring the achievement engine, 5 of the roadmap's 8 reward types built (`TITLE`, `BADGE`, `STREAK_PROTECTION`, `FEATURE_UNLOCK`, `QUEST`), equippable titles via a `PATCH /users/me` field + a Settings picker + a Topbar display, and a "Level Rewards" tab on `/achievements`. See `gameplay-systems.md` § "Level-up rewards (Feature 6)" and the deliberate-deviation note below. |
 | 7 — Skill and Attribute Detail Pages | **Done** (Sprint 3). New `/attributes/[id]` route (didn't exist at all before this sprint): level/XP header, nested skills, an "Unlocked Rewards" section, XP growth chart, recent activity. `/skills/[id]` gained a "What contributes to this skill?" section (quests/habits/goals currently tagged with it, filtered client-side over existing list endpoints - no new backend endpoint needed) and its "Part of {attribute}" link now actually links to the attribute page instead of `/skills`. See `docs/frontend.md`'s route table. |
 | 8 — Intelligent Goal Decomposition | **Done** (Sprint 4 "Better Goals", committed straight to `master`, closing out the sprint). `GoalMilestone` (ordered checklist items, optional small XP reward) and `Habit.goalId` (mirroring the pre-existing `Quest.goalId`) landed; a `COMPLETION`-type goal's progress now syncs automatically from linked quest completions instead of requiring a manual re-count. Frontend: the goal detail page gained a Milestones card and a Linked Habits card, and swapped its manual numeric input for a read-only note on `COMPLETION`-type goals; the habit modal gained a Goal picker mirroring the quest modal's. The roadmap's "intelligent"/AI-driven decomposition itself is out of scope - see the deliberate-deviation note below. |
-| 9 — Character Build System | Backend N/A - a pure frontend computation over `GET /attributes`'s existing data, in progress as part of Sprint 5 ("RPG Identity"). See the deliberate-deviation note below. |
-| 10 — Skill Trees | Backend N/A - a pure frontend computation over `GET /skills`'s existing `level` field, in progress as part of Sprint 5. Roadmap's "concrete unlocks per tier" deliberately deferred - see the note below. |
+| 9 — Character Build System | **Done** (Sprint 5 "RPG Identity"). `computeArchetype` - a pure frontend computation over `GET /attributes`'s existing data, no backend change. A curated pairing of the top 2 attribute levels resolves to a named archetype (e.g. Physical+Discipline → "Warrior"), shown as a badge on `/dashboard`. See `docs/frontend.md` § "Derived game-mechanic helpers" and the deliberate-deviation note below. |
+| 10 — Skill Trees | **Done** (Sprint 5). `getSkillTier` - a pure frontend computation over each skill's existing `level` field, no backend change. Shows a tier label (Beginner/Novice/Intermediate/Advanced/Master) next to every skill's level badge. Roadmap's "concrete unlocks per tier" deliberately not built - see the note below. |
 | 11 — Titles and Perks | **Already done** - this is exactly what Sprint 3's "Level-Up Rewards" shipped, just under a different name. No new work in Sprint 5. See `gameplay-systems.md` § "Seasons and Chapters (Feature 13)" for a short note on why, and § "Level-up rewards (Feature 6)" for the full design. |
 | 12 — Unlockable Content | Not yet built - not part of Sprint 5's scope (the roadmap's own 7-sprint list doesn't slot this feature into any specific sprint). |
-| 13 — Seasons and Chapters | **Backend done** (Sprint 5 "RPG Identity", committed straight to `master`). New `Season` model - a named chapter with a focus of 1+ attributes, snapshotting level/attribute levels at start and close so progress deltas stay meaningful once closed; at most one `ACTIVE` season per user, enforced in `SeasonsService`. `Goal.seasonId` mirrors the pre-existing `Quest.goalId`/`Habit.goalId` pattern. See `gameplay-systems.md` § "Seasons and Chapters (Feature 13)". Frontend not yet built. |
+| 13 — Seasons and Chapters | **Done** (Sprint 5 "RPG Identity", committed straight to `master`, closing out the sprint). New `Season` model - a named chapter with a focus of 1+ attributes, snapshotting level/attribute levels at start and close so progress deltas stay meaningful once closed; at most one `ACTIVE` season per user, enforced in `SeasonsService`. `Goal.seasonId` mirrors the pre-existing `Quest.goalId`/`Habit.goalId` pattern. Frontend: a new `/seasons` page (current season + history + a start-season modal), a current-season banner on `/dashboard`, and a season picker in the goal creation modal. See `gameplay-systems.md` § "Seasons and Chapters (Feature 13)". |
 | 14 — Identity System | Deliberately deferred - see the note below. |
 | Everything in Phases 2-4 | Not yet built - out of scope for Sprint 2. |
 

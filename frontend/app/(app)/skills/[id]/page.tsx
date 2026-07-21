@@ -29,6 +29,7 @@ import { getQuests } from '@/lib/api/quests';
 import { getHabits } from '@/lib/api/habits';
 import { getGoals } from '@/lib/api/goals';
 import { getApiErrorMessage } from '@/lib/api-client';
+import { getSkillTier } from '@/lib/skill-tier';
 import { XPSourceType } from '@/lib/types';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { ProgressBar } from '@/components/ui/progress-bar';
@@ -215,6 +216,7 @@ export default function SkillDetailPage({ params }: { params: { id: string } }) 
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="text-xl font-semibold text-foreground">{skill.name}</h1>
+                  <Badge variant="outline">{getSkillTier(skill.level)}</Badge>
                   <Badge variant="primary">Lvl {skill.level}</Badge>
                 </div>
                 <Link

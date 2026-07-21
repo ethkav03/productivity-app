@@ -47,14 +47,15 @@ for exact prop shapes, read the referenced files directly.
 | `/login` | `frontend/app/(auth)/login/page.tsx` | Email + password login form; on success calls `router.push('/dashboard')`. |
 | `/register` | `frontend/app/(auth)/register/page.tsx` | Email + username + password registration form; on success calls `router.push('/onboarding')`. |
 | `/onboarding` | `frontend/app/onboarding/page.tsx` | 4-step first-run wizard: pick starting skills, create a goal, add starter quests/habits. |
-| `/dashboard` | `frontend/app/(app)/dashboard/page.tsx` | Home screen: streak + level/XP header, an 8-axis "Character Shape" radar chart of attribute levels, today's habits, active quests (incl. Locked/Complete/Claim Reward states; "Active Quests" card title links to `/quests`), active goals, recent achievements, activity feed. |
-| `/skills` | `frontend/app/(app)/skills/page.tsx` | Skills grouped by the 8 fixed attributes, with progress bars (each attribute's header links to `/attributes/[id]`); add-skill modal (suggested or custom) and delete. |
+| `/dashboard` | `frontend/app/(app)/dashboard/page.tsx` | Home screen: streak + level/XP header (with a "Character Build" archetype badge next to the greeting - Sprint 5, see below), a "Current Season" banner if one is active (Sprint 5, links to `/seasons`), an 8-axis "Character Shape" radar chart of attribute levels, today's habits, active quests (incl. Locked/Complete/Claim Reward states; "Active Quests" card title links to `/quests`), active goals, recent achievements, activity feed. |
+| `/skills` | `frontend/app/(app)/skills/page.tsx` | Skills grouped by the 8 fixed attributes, with progress bars (each attribute's header links to `/attributes/[id]`) and a tier badge per skill (Sprint 5, see below); add-skill modal (suggested or custom) and delete. |
 | `/skills/[id]` | `frontend/app/(app)/skills/[id]/page.tsx` | Single skill detail: rename/edit description, a "What contributes to this skill?" list of quests/habits/goals currently tagged with it (client-side filter over `GET /quests`/`GET /habits`/`GET /goals`, no dedicated endpoint), cumulative XP growth chart, recent XP transaction list, delete. The "Part of {attribute}" line links to `/attributes/[id]`. |
 | `/attributes/[id]` | `frontend/app/(app)/attributes/[id]/page.tsx` | Single attribute detail (new, Sprint 3 Feature 7): level/XP header, nested skills grid, an "Unlocked Rewards" section (`LevelReward`s scoped to this attribute, from `GET /level-rewards` + `GET /level-rewards/unlocked`, filtered client-side by `attributeKey`), cumulative XP growth chart, recent XP transaction list. Read-only - attributes have no edit/delete. |
 | `/quests` | `frontend/app/(app)/quests/page.tsx` | "Quest Board": a `ChallengesSection` (Daily/Weekly Challenge cards, polling `GET /challenges` every 5s, celebrating on completion) above Active/Completed status tabs plus a Daily/Weekly/Long-Term/System category pill-filter row (`?category=` on `GET /quests`; a category badge shows on non-Long-Term cards), create-quest modal (incl. a category picker, `RewardBundleEditor`, and a `RequirementsEditor` "Prerequisites" disclosure for level-gated quests). Locked quest cards render dimmed with a requirement checklist instead of a Complete button; completing swaps the button to "Claim Reward" (the actual XP-awarding step - see `docs/gameplay-systems.md` §§ "Level-gated quests and reward claiming" / "Quest Board and System quests" / "Daily and Weekly Challenges"). |
 | `/habits` | `frontend/app/(app)/habits/page.tsx` | Today's habits with streak counters, create-habit modal (incl. a Goal picker mirroring the quest modal's, `RewardBundleEditor`), complete/pause/reactivate/delete. A habit linked to a goal shows a "part of: {goal}" badge (Sprint 4). |
-| `/goals` | `frontend/app/(app)/goals/page.tsx` | Active/Completed goal tabs, create-goal modal (incl. `RewardBundleEditor`). |
+| `/goals` | `frontend/app/(app)/goals/page.tsx` | Active/Completed goal tabs, create-goal modal (incl. a Season picker mirroring the quest/habit modals' Goal pickers - Sprint 5, `RewardBundleEditor`). |
 | `/goals/[id]` | `frontend/app/(app)/goals/[id]/page.tsx` | Single goal detail: a Milestones card (ordered checklist with an inline add-form, per-item complete/undo/delete - Sprint 4), linked quests, linked habits (Sprint 4), a log-progress form (binary mark-complete, numeric value entry, or - for `COMPLETION`-type goals - a read-only note, since progress now syncs automatically from linked quest completions), delete. |
+| `/seasons` | `frontend/app/(app)/seasons/page.tsx` | New route (Sprint 5, "Seasons and Chapters"): a "Current Season" card (focus attribute badges, live character/attribute level deltas since the season started, a "Close Season" action) or an empty state if none is active; a "Past Seasons" grid below showing each closed season's frozen deltas; a "Start New Season" modal (title, description, a `PillSelect` of the 8 attributes as focus, optional planned end date) - starting one while another is active shows a native `confirm()` warning that it'll close the current one first, matching the backend's auto-close behavior. |
 | `/achievements` | `frontend/app/(app)/achievements/page.tsx` | An inline pill-toggle between two tabs (same pattern as the Quests page's status tabs): "Achievements" (all achievement definitions split into Unlocked / Locked, with a per-type requirement description) and "Level Rewards" (Sprint 3 Feature 6 - same Unlocked/Locked treatment for `LevelReward`s, requirement text resolved via `GET /attributes` for attribute-scoped rewards' display names). |
 | `/leaderboard` | `frontend/app/(app)/leaderboard/page.tsx` | Ranks the caller against their accepted friends: metric tabs (Overall Level / Attribute / XP Earned). Attribute mode filters via a `role="radiogroup"` of icon-only circles per attribute (categorical color, matching `AttributeDots`/Skills page), the selected one expanding into an icon+name pill; XP mode filters via a period pill row. Below that: a top-3 podium (graceful with fewer than 3 entries), a 4th-onward ranked list, and a "Manage Friends" modal (send/accept/decline/remove, plus a "Suggested Friends" section) with an unread-incoming-request badge. |
 | `/analytics` | `frontend/app/(app)/analytics/page.tsx` | Overview stat tiles, attribute progression grid, XP-over-time area chart, skill-level bar chart, activity heatmap, recent activity feed (with a "Full history" link to the page below). |
@@ -310,6 +311,26 @@ page paints in the correct theme on the first frame instead of flashing light an
 dark. `<html lang="en" suppressHydrationWarning>` sets `suppressHydrationWarning` because this
 script mutates the DOM ahead of React's hydration pass.
 
+## Derived game-mechanic helpers (Sprint 5)
+
+Two small, pure functions computing RPG-flavor labels entirely client-side from data the API
+already returns - no backend endpoint, model, or migration for either (see the deliberate-deviation
+notes in `docs/feature-roadmap.md` § "Feature 9"/"Feature 10" for why this scope was chosen).
+
+- **`frontend/src/lib/character-archetype.ts`** - `computeArchetype(attributes)` ("Character Build
+  System", Feature 9). Takes the caller's 8 attributes (as returned by `GET /attributes`), sorts by
+  `level` descending, and looks up the top two in a small curated table (e.g. Physical+Discipline →
+  "Warrior"). Falls back to `"Balanced"` when the top two attribute levels differ by 1 or less (no
+  single pair clearly dominates), or `"Explorer"` for any top-two pair not in the curated table.
+  Always recomputed on render, never persisted - a build can never "lock in." Used on `/dashboard`,
+  shown as a badge next to the greeting (`title` attribute carries the one-line description on
+  hover).
+- **`frontend/src/lib/skill-tier.ts`** - `getSkillTier(level)` ("Skill Trees", Feature 10). Maps a
+  skill's `level` to a named tier: Beginner (1+) / Novice (5+) / Intermediate (10+) / Advanced
+  (20+) / Master (35+). Used everywhere a skill's level already appears - the Skills page's skill
+  cards, the skill detail page's header, and the attribute detail page's nested skill list - as an
+  additional `outline`-variant `Badge` next to the existing "Lvl N" badge.
+
 ## Layout/navigation components
 
 All under `frontend/src/components/layout/`.
@@ -355,6 +376,7 @@ A single shared `NAV_ITEMS` array consumed by both `Sidebar` and `MobileNav`:
 | Quests | `/quests` | `CheckSquare` |
 | Habits | `/habits` | `Repeat` |
 | Goals | `/goals` | `Target` |
+| Seasons | `/seasons` | `Hourglass` |
 | Achievements | `/achievements` | `Award` |
 | Leaderboard | `/leaderboard` | `Crown` |
 | Analytics | `/analytics` | `BarChart3` |

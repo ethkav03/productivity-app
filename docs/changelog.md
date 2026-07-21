@@ -4,6 +4,34 @@ Dated log of notable changes to Life RPG. This is a narrative history for orient
 changed and why"), not a replacement for `git log` - see git history for exact diffs and commit
 messages.
 
+## 2026-07-21 — RPG Identity: character builds, skill tiers, seasons UI (frontend)
+
+Frontend slice of "Sprint 5: RPG Identity" - Phase 2 Features 9, 10, 13, closing out the sprint
+(Feature 14 stays deliberately deferred). Fourth sprint committing straight to `master`.
+
+New `/seasons` page: a "Current Season" card (focus attribute badges, live level deltas since the
+season started, "Close Season") or an empty state if none is active, a "Past Seasons" grid below
+with each closed season's frozen deltas, and a "Start New Season" modal. Starting a new season
+while one is already active warns via a native confirm dialog that it'll close the current one
+first, matching the backend's own auto-close behavior. The dashboard gained a compact "Current
+Season" banner linking through to it, and the goal creation modal gained a Season picker,
+identical in shape to the quest/habit modals' Goal pickers from earlier sprints.
+
+Also shipped two small, entirely frontend-computed additions with no backend change at all:
+`computeArchetype` (Feature 9, "Character Build System") derives a named archetype - e.g.
+Physical+Discipline → "Warrior" - from the caller's top 2 attribute levels and shows it as a badge
+on the dashboard, recomputed on every view so it can never "lock in." `getSkillTier` (Feature 10,
+"Skill Trees") maps a skill's level to a tier label (Beginner → Master), shown next to every
+existing "Lvl N" badge across the Skills page, skill detail page, and attribute detail page. The
+roadmap's "concrete unlocks per tier" half of Feature 10 was deliberately not built - see
+`docs/feature-roadmap.md`'s Feature 10 deviation note.
+
+Verified against real running dev servers - a Playwright pass (light and dark themes) pushed a
+fresh account's Physical attribute past its Discipline by more than one level (confirming the
+"Warrior" archetype resolves over the "Balanced" fallback), started a season through the actual
+UI, linked a habit and a goal to it via their respective modals, and confirmed the season's live
+delta badges update after earning more XP post-snapshot - 12 assertions, all passing.
+
 ## 2026-07-21 — Seasons and Chapters (backend)
 
 Backend slice of "Sprint 5: RPG Identity" (`docs/feature-roadmap.md`) - Phase 2 Features 9, 10,

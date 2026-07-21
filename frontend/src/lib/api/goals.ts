@@ -24,6 +24,7 @@ export interface CreateGoalInput {
   unit?: string;
   targetDate?: string;
   xpReward?: number;
+  seasonId?: string;
   skillIds?: string[];
   skillRewardOverrides?: SkillRewardOverride[];
   attributeBonuses?: Array<{ attributeId: string; amount: number }>;

@@ -26,6 +26,7 @@ import { getAttribute } from '@/lib/api/attributes';
 import { getUnlockedLevelRewards, getLevelRewards } from '@/lib/api/level-rewards';
 import { getApiErrorMessage } from '@/lib/api-client';
 import { attributeColor } from '@/lib/attribute-colors';
+import { getSkillTier } from '@/lib/skill-tier';
 import { XPSourceType } from '@/lib/types';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { ProgressBar } from '@/components/ui/progress-bar';
@@ -218,7 +219,10 @@ export default function AttributeDetailPage({ params }: { params: { id: string }
                 <Card className="h-full cursor-pointer transition-colors hover:border-primary/40">
                   <div className="flex items-center justify-between gap-2">
                     <p className="truncate text-sm font-semibold text-foreground">{skill.name}</p>
-                    <Badge variant="default">Lvl {skill.level}</Badge>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <Badge variant="outline">{getSkillTier(skill.level)}</Badge>
+                      <Badge variant="default">Lvl {skill.level}</Badge>
+                    </div>
                   </div>
                   <div className="mt-4">
                     <div className="mb-1 flex justify-between text-xs text-muted">

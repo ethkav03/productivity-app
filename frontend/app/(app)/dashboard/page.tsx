@@ -13,7 +13,7 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from 'recharts';
-import { CheckCircle2, Circle, Flame, Sparkles, Trophy } from 'lucide-react';
+import { CheckCircle2, Circle, Flame, Hourglass, Sparkles, Trophy } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useCelebration } from '@/hooks/use-celebration';
 import { completeHabit, getHabits } from '@/lib/api/habits';
@@ -21,7 +21,9 @@ import { claimQuestReward, completeQuest, getQuests } from '@/lib/api/quests';
 import { getGoals } from '@/lib/api/goals';
 import { getUnlockedAchievements } from '@/lib/api/achievements';
 import { getAnalyticsAttributes, getAnalyticsFeed } from '@/lib/api/analytics';
+import { getSeasons } from '@/lib/api/seasons';
 import { attributeColor } from '@/lib/attribute-colors';
+import { computeArchetype } from '@/lib/character-archetype';
 import { AttributeDots } from '@/components/ui/attribute-dots';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { ProgressBar } from '@/components/ui/progress-bar';
@@ -56,6 +58,13 @@ export default function DashboardPage() {
     queryFn: getUnlockedAchievements,
   });
   const feedQuery = useQuery({ queryKey: ['analytics', 'feed'], queryFn: () => getAnalyticsFeed(8) });
+  const currentSeasonQuery = useQuery({
+    queryKey: ['seasons', 'ACTIVE'],
+    queryFn: () => getSeasons({ status: 'ACTIVE' }),
+  });
+  // Same queryKey as AttributeRadarSection's own fetch below - TanStack Query
+  // dedupes both into a single request.
+  const attributesQuery = useQuery({ queryKey: ['analytics', 'attributes'], queryFn: getAnalyticsAttributes });
 
   async function handleCompletionSuccess(result: CompletionResult) {
     queryClient.invalidateQueries({ queryKey: ['habits'] });
@@ -108,6 +117,8 @@ export default function DashboardPage() {
   const activeGoals = activeGoalsQuery.data ?? [];
   const unlockedAchievements = unlockedAchievementsQuery.data ?? [];
   const feed = feedQuery.data ?? [];
+  const currentSeason = currentSeasonQuery.data?.[0];
+  const archetype = attributesQuery.data ? computeArchetype(attributesQuery.data) : null;
 
   const xpProgress = user.xpForNextLevel > 0 ? (user.currentXP / user.xpForNextLevel) * 100 : 0;
 
@@ -127,9 +138,16 @@ export default function DashboardPage() {
       <Card>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-xl font-semibold text-foreground">
-              {greetingForHour(new Date().getHours())}, {user.username}
-            </h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl font-semibold text-foreground">
+                {greetingForHour(new Date().getHours())}, {user.username}
+              </h1>
+              {archetype && (
+                <Badge variant="accent" title={archetype.description}>
+                  {archetype.name}
+                </Badge>
+              )}
+            </div>
             <p className="mt-1 text-sm text-muted">Here&apos;s what&apos;s on deck for today.</p>
           </div>
           <div className="flex items-center gap-2 self-start rounded-full bg-warning/15 px-3 py-1.5 text-warning sm:self-auto">
@@ -149,6 +167,31 @@ export default function DashboardPage() {
           </div>
         </div>
       </Card>
+
+      {currentSeason && (
+        <Link href="/seasons" className="block">
+          <Card className="cursor-pointer transition-colors hover:border-primary/40">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
+                  <Hourglass className="h-4.5 w-4.5" />
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted">Current Season</p>
+                  <p className="text-sm font-semibold text-foreground">{currentSeason.title}</p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {currentSeason.focus.map((key) => (
+                  <Badge key={key} variant="outline" style={{ color: attributeColor(key) }}>
+                    {key}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          </Card>
+        </Link>
+      )}
 
       {hasNoActivities && (
         <EmptyState

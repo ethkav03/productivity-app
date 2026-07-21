@@ -122,9 +122,40 @@ export interface GoalMilestone {
   createdAt: string;
 }
 
+export type SeasonStatus = 'ACTIVE' | 'COMPLETED';
+
+export interface SeasonAttributeDelta {
+  key: AttributeKey;
+  startLevel: number;
+  currentLevel: number;
+  delta: number;
+}
+
+export interface Season {
+  id: string;
+  userId: string;
+  title: string;
+  description: string | null;
+  focus: AttributeKey[];
+  startDate: string;
+  endDate: string | null;
+  status: SeasonStatus;
+  startLevel: number;
+  startAttributeLevels: Partial<Record<AttributeKey, number>>;
+  closedAt: string | null;
+  endLevel: number | null;
+  endAttributeLevels: Partial<Record<AttributeKey, number>> | null;
+  createdAt: string;
+  currentLevel: number;
+  levelDelta: number;
+  attributeDeltas: SeasonAttributeDelta[];
+  goals?: Goal[];
+}
+
 export interface Goal {
   id: string;
   userId: string;
+  seasonId: string | null;
   title: string;
   description: string | null;
   category: string | null;
@@ -143,6 +174,7 @@ export interface Goal {
   skillRewardOverrides: SkillRewardOverride[];
   attributeBonuses: ActivityAttributeBonus[];
   milestones: GoalMilestone[];
+  season: { id: string; title: string } | null;
   quests?: Quest[];
   habits?: Habit[];
   progressPercent: number;
